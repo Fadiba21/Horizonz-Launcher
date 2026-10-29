@@ -102,8 +102,30 @@ jobs:
             SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n 1)"
           fi
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
+
+          NDK_VERSION="28.2.13676358"
+          NDK_DIR="$ANDROID_HOME/ndk/$NDK_VERSION"
+          for attempt in 1 2 3; do
+            if [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION" && [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/temp"
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Unable to install Android NDK $NDK_VERSION after 3 attempts."
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
+
+          test -f "$NDK_DIR/source.properties"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
       - name: Set up Rust Toolchain (${{ matrix.rust_target }})
         uses: dtolnay/rust-toolchain@stable

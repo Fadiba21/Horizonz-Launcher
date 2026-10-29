@@ -677,8 +677,7 @@ private fun CleanVersionsViewport(
                                     TextButton(
                                         onClick = {
                                             val textToCopy = if (installStatus.logs.isNotEmpty()) {
-                                                installStatus.logs.joinToString("
-")
+                                                installStatus.logs.joinToString("\n")
                                             } else {
                                                 "Stage: ${installStatus.stage} (${installStatus.percent}%)"
                                             }
@@ -708,8 +707,7 @@ private fun CleanVersionsViewport(
                                 exit = shrinkVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                             ) {
                                 val logContent = if (installStatus.logs.isNotEmpty()) {
-                                    installStatus.logs.joinToString("
-")
+                                    installStatus.logs.joinToString("\n")
                                 } else if (installStatus.ready) {
                                     "[OK] Minecraft 26.3 assets, worldgen tables, and touch controls verified."
                                 } else {
