@@ -603,10 +603,8 @@ private fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "• Native Rust 26.3 Engine: 100% parity across all 14 subsystems (Worldgen, Redstone, Mob AI, Raids, Anvil 1.8–26.3 saves).
-" +
-                            "• Android Port (v0.7.3/0.7.4): NativeActivity libhorizon_android.so, SAF DocumentsProvider, Touch HUD & Gamepad support.
-" +
+                        text = "• Native Rust 26.3 Engine: 100% parity across all 14 subsystems (Worldgen, Redstone, Mob AI, Raids, Anvil 1.8–26.3 saves).\n" +
+                            "• Android Port (v0.7.3/0.7.4): NativeActivity libhorizon_android.so, SAF DocumentsProvider, Touch HUD & Gamepad support.\n" +
                             "• Zalith Plus 1.3 UI: Cape Wardrobe, Chroma Names, Distant Terrain up to 1024 chunks, 70% default resolution scale, Screen Recorder.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -634,12 +632,9 @@ private fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "• Active Renderer: wgpu (${config.wgpuBackend}) • Preset: ${config.graphicsPreset}
-" +
-                            "• Distant Terrain: ${config.distantTerrainChunks} chunks • Resolution: ${config.resolutionScalePercent}%
-" +
-                            "• Active Cape: ${activeAccount.selectedCapeName} (${if (activeAccount.slimSkinModel) "Slim" else "Classic"} model)
-" +
+                        text = "• Active Renderer: wgpu (${config.wgpuBackend}) • Preset: ${config.graphicsPreset}\n" +
+                            "• Distant Terrain: ${config.distantTerrainChunks} chunks • Resolution: ${config.resolutionScalePercent}%\n" +
+                            "• Active Cape: ${activeAccount.selectedCapeName} (${if (activeAccount.slimSkinModel) "Slim" else "Classic"} model)\n" +
                             "• Playtime Weekly Grid: Mon 1.5h | Tue 2.1h | Wed 1.8h | Thu 3.2h",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
