@@ -116,9 +116,20 @@ jobs:
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
-          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28 --no-daemon --stacktrace
+          set +e
+          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28 --no-daemon --stacktrace 2>&1 | tee gradle_build.log
+          GRADLE_EXIT=${PIPESTATUS[0]}
+          set -e
+          if [ "$GRADLE_EXIT" -ne 0 ]; then
+            echo "### Gradle Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 120 gradle_build.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit "$GRADLE_EXIT"
+          fi
           mkdir -p ../../dist
-          find ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" -exec cp {} ../../dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk \;
+          APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})

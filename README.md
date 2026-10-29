@@ -11,6 +11,7 @@
 1. **Core Engine ([horizon-rust/horizon](https://github.com/horizon-rust/horizon) — `v0.2.97`)**:
    - Reimplementasi **Minecraft: Java Edition 26.3** yang ditulis ulang 100% menggunakan **Rust** (tanpa JVM), diverifikasi terhadap vanilla menggunakan **281 differential harnesses** (paritas 100% di 14 subsistem).
 2. **Android Native Backend ([Vasysik/horizon-android](https://github.com/Vasysik/horizon-android) — `v0.7.3` / `v0.7.4`)**:
-   - Porting native Android melalui crate `crates/horizon-android` (`cdylib` $ightarrow$ `libhorizon_android.so`), `HorizonActivity.java` (`NativeActivity`), dan `HorizonDocumentsProvider.java` (SAF `DocumentsProvider`).
+   - Porting native Android melalui crate `crates/horizon-android` (`cdylib` $
+ightarrow$ `libhorizon_android.so`), `HorizonActivity.java` (`NativeActivity`), dan `HorizonDocumentsProvider.java` (SAF `DocumentsProvider`).
 3. **Material 3 Frontend UI ([Star1xr/ZalithLauncher2Plus](https://github.com/Star1xr/ZalithLauncher2Plus) — `2.4.10 Plus 1.3`)**:
    - Dibangun menggunakan **Jetpack Compose + Material Design 3 (Material You)** (`dev.horizon.android.ui.ZalithMainActivity`).
