@@ -82,7 +82,6 @@ jobs:
           mkdir -p .local/android/gradle-assets
           cp -f LICENSE.txt .local/android/gradle-assets/ || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
-          cp -f packaging/android/bedrock-controls.json .local/android/gradle-assets/ || true
 
           python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
           ls -lh .local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so
