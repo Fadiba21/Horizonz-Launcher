@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       build_mode:
-        description: "Engine build mode: 'hybrid' (extracts verified v0.7.3 libhorizon_android.so + compiles Rust JNI bridge & Material 3 APK fast) or 'full_source' (clones & compiles full Vasysik/horizon-android Rust workspace from source)"
+        description: "Build mode: 'native_runtime' (compiles HorizonZ's own native Rust libhorizon_android.so from source) or 'full_source' (syncs full upstream workspace & compiles)"
         required: false
-        default: "hybrid"
+        default: "native_runtime"
         type: choice
         options:
-          - hybrid
+          - native_runtime
           - full_source
 
 permissions:
@@ -69,13 +69,14 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Sync Upstream Vasysik/horizon-android (if full_source mode selected)
+      - name: Sync Upstream Engine (Optional full_source mode)
         if: ${{ github.event.inputs.build_mode == 'full_source' }}
         run: |
           chmod +x scripts/sync_upstream.sh
           ./scripts/sync_upstream.sh
+          python3 scripts/patch_upstream_direct_game.py
 
-      - name: Prepare Native Engine Libraries & Assets (${{ matrix.abi }})
+      - name: Compile Native Rust Runtime (libhorizon_android.so) from Source (${{ matrix.abi }})
         run: |
           mkdir -p .local/android/gradle-jni/${{ matrix.abi }}
           mkdir -p .local/android/gradle-assets
@@ -83,27 +84,8 @@ jobs:
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
           cp -f packaging/android/bedrock-controls.json .local/android/gradle-assets/ || true
 
-          if [ "${{ github.event.inputs.build_mode }}" != "full_source" ]; then
-            echo "Fetching official Vasysik/horizon-android v0.7.3 release APK for ${{ matrix.abi }} to extract prebuilt engine-data.zip & libhorizon_android.so..."
-            APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
-            if curl -fsSL -L "$APK_URL" -o /tmp/upstream.apk; then
-              unzip -q -o /tmp/upstream.apk "lib/${{ matrix.abi }}/libhorizon_android.so" -d /tmp/upstream_extracted || true
-              unzip -q -o /tmp/upstream.apk "assets/*" -d /tmp/upstream_extracted || true
-              if [ -f "/tmp/upstream_extracted/lib/${{ matrix.abi }}/libhorizon_android.so" ]; then
-                cp -f "/tmp/upstream_extracted/lib/${{ matrix.abi }}/libhorizon_android.so" ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
-              fi
-              if [ -d "/tmp/upstream_extracted/assets" ]; then
-                cp -rf /tmp/upstream_extracted/assets/* .local/android/gradle-assets/ || true
-              fi
-              rm -rf /tmp/upstream.apk /tmp/upstream_extracted
-            fi
-          fi
-
-          if [ ! -f ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" ]; then
-            python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
-          else
-            python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --check --ndk "$ANDROID_NDK_HOME"
-          fi
+          python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
+          ls -lh .local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -129,14 +111,14 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.8.0-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-0.7.4-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-0.8.0-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-0.8.0-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
@@ -160,13 +142,12 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.7.4-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v0.7.4 (Build #${{ github.run_number }} • Rust 26.3 + Zalith M3 UI)"
+          tag_name: v0.8.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v0.8.0 (Build #${{ github.run_number }} • Native Rust .so + Clean Zalith UI)"
           body: |
-            ## HorizonZ - Launcher (Minecraft: Java Edition 26.3 in 100% Rust for Android)
-            - **Upstream Engine**: [horizon-rust/horizon](https://github.com/horizon-rust/horizon) (`v0.2.97` • Minecraft 26.3 in Rust)
-            - **Android Native Backend**: [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android) (`v0.7.3` / `0.7.4` • `libhorizon_android.so`, `HorizonActivity`, `HorizonDocumentsProvider`, Touch & Gamepad HUD)
-            - **Material 3 Frontend**: Styled after [Star1xr/ZalithLauncher2Plus](https://github.com/Star1xr/ZalithLauncher2Plus) (`2.4.10 Plus 1.3` • Jetpack Compose Material You, Cape Wardrobe, Chroma Names, Distant Terrain up to 1024 chunks, In-Launcher File Manager, Screen Recorder)
+            ## HorizonZ - Launcher v0.8.0 (Native Rust Runtime + Minimalist Zalith Launcher 2 UI)
+            - **100% Native Compiled `.so` Runtime**: Compiles `libhorizon_android.so` directly from Rust source (`crates/horizon-android`) via Cargo + Android NDK 28 (`android-activity` `native-activity` + EGL/OpenGL ES 3.0 & JNI runtime) — no longer uses the prebuilt `Vasysik/horizon-android` launcher APK.
+            - **Clean Minimalist Zalith Launcher 2 UI**: Sleek 3-zone landscape Material 3 design (Icon-only Left Navigation Rail, Clean Glassmorphic Center Viewport, Floating Right Launch Sidebar with Account Modal & Play Button).
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt

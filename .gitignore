@@ -1,10 +1,7 @@
-# Horizon & Rust build artifacts
 /target/
 /.local/
 **/*.rs.bk
 Cargo.lock
-
-# Android & Gradle build artifacts
 .gradle/
 build/
 dist/
@@ -20,8 +17,6 @@ packaging/android/local.properties
 *.apk
 *.aab
 *.idsig
-
-# Never commit proprietary Mojang game assets or prepared resources
 /server.jar
 /client.jar
 /versions/

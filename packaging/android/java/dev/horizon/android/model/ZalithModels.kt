@@ -1,26 +1,24 @@
 package dev.horizon.android.model
 
-enum class ZalithNavTab(val title: String, val subtitle: String) {
-    DASHBOARD("Dashboard", "Play & Status"),
-    ACCOUNTS("Accounts & Capes", "Profiles, Skins & Chroma"),
-    ASSETS("26.3 Assets", "Horizon Prepare & Engine"),
-    CONTENT("Files & Mods", "Worlds, Packs & Wasm Mods"),
-    CONTROLS("Touch & HUD", "Bedrock Controls & Keymap"),
-    SETTINGS("Settings", "Vulkan, Terrain & Audio")
+enum class ZalithNavTab(val title: String) {
+    HOME("Home"),
+    VERSIONS("Versions"),
+    FILES("Files"),
+    SETTINGS("Settings")
 }
 
 enum class AccountType(val badge: String) {
-    OFFLINE("Offline Local"),
-    MICROSOFT("Microsoft OAuth (Online 26.3)"),
-    ELY_BY("Ely.by / Authlib"),
-    CUSTOM_SERVER("Custom Yggdrasil")
+    OFFLINE("Offline"),
+    MICROSOFT("Microsoft"),
+    ELY_BY("Ely.by"),
+    CUSTOM_SERVER("Custom")
 }
 
 enum class ZalithThemePalette(val label: String, val primaryHex: Long, val secondaryHex: Long, val surfaceHex: Long) {
-    EMBERMIRE("Zalith Embermire (ZL2+ Default)", 0xFFFF7043, 0xFFFFB74D, 0xFF141821),
-    HORIZON_RUST("Horizon Rust Orange", 0xFFFF5722, 0xFF26A69A, 0xFF10141C),
-    MATERIAL_OCEAN("Material You Ocean", 0xFF29B6F6, 0xFF80CBC4, 0xFF0F1722),
-    AMOLED_EMERALD("Redstone Melter Emerald", 0xFF66BB6A, 0xFFA5D6A7, 0xFF090C10)
+    EMBERMIRE("Embermire", 0xFFFF7043, 0xFFFFB74D, 0xFF12151E),
+    HORIZON_RUST("Horizon Rust", 0xFFFF5722, 0xFF26A69A, 0xFF0E1218),
+    MATERIAL_OCEAN("Ocean Blue", 0xFF29B6F6, 0xFF80CBC4, 0xFF0E1520),
+    AMOLED_EMERALD("Emerald", 0xFF66BB6A, 0xFFA5D6A7, 0xFF090C10)
 }
 
 data class ZalithAccount(
@@ -30,7 +28,7 @@ data class ZalithAccount(
     val accountType: AccountType,
     val chromaNameEnabled: Boolean = false,
     val slimSkinModel: Boolean = false,
-    val selectedCapeName: String = "Horizon Founder Cape",
+    val selectedCapeName: String = "Horizon Cape",
     val isActive: Boolean = false
 )
 
@@ -48,7 +46,7 @@ data class HorizonConfigState(
     val resolutionScalePercent: Int = 70,
     val renderDistanceChunks: Int = 16,
     val simulationDistanceChunks: Int = 10,
-    val distantTerrainChunks: Int = 256,
+    val distantTerrainChunks: Int = 128,
     val maxFps: Int = 120,
     val enableVsync: Boolean = true,
     val enableHdr: Boolean = false,

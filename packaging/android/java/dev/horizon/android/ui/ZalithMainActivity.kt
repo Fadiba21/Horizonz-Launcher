@@ -12,7 +12,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -40,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import dev.horizon.android.bridge.HorizonNativeBridge
 import dev.horizon.android.model.*
 import dev.horizon.android.ui.theme.HorizonZalithTheme
-import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
 
@@ -61,7 +61,7 @@ class ZalithMainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    HorizonZalithAppScreen(
+                    ZalithCleanLauncherScreen(
                         config = config,
                         onConfigChange = { config = it },
                         useDynamicColor = useDynamicColor,
@@ -74,47 +74,38 @@ class ZalithMainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HorizonZalithAppScreen(
+fun ZalithCleanLauncherScreen(
     config: HorizonConfigState,
     onConfigChange: (HorizonConfigState) -> Unit,
     useDynamicColor: Boolean,
     onToggleDynamicColor: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(ZalithNavTab.DASHBOARD) }
-    var sidebarExpanded by remember { mutableStateOf(true) }
+    var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
+    var showAccountDialog by remember { mutableStateOf(false) }
     var showLogDialog by remember { mutableStateOf(false) }
-    var isRecording by remember { mutableStateOf(false) }
-    var recordingSeconds by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(isRecording) {
-        while (isRecording) {
-            delay(1000L)
-            recordingSeconds += 1
-        }
-    }
 
     var accounts by remember {
         mutableStateOf(
             listOf(
                 ZalithAccount(
-                    id = "acc_1",
-                    username = "SteveRust26",
+                    id = "1",
+                    username = "Steve",
                     uuid = "8667ba71-b85a-4004-af54-457a9734eed7",
                     accountType = AccountType.OFFLINE,
-                    chromaNameEnabled = true,
+                    chromaNameEnabled = false,
                     slimSkinModel = false,
-                    selectedCapeName = "Horizon 26.3 Rust Cape",
+                    selectedCapeName = "Horizon Cape",
                     isActive = true
                 ),
                 ZalithAccount(
-                    id = "acc_2",
-                    username = "Alex_MSA",
+                    id = "2",
+                    username = "Alex",
                     uuid = "ec561538-f3fd-461d-aff5-086b22154bce",
                     accountType = AccountType.MICROSOFT,
-                    chromaNameEnabled = false,
+                    chromaNameEnabled = true,
                     slimSkinModel = true,
-                    selectedCapeName = "Migrator Cape",
+                    selectedCapeName = "Migrator",
                     isActive = false
                 )
             )
@@ -122,187 +113,130 @@ fun HorizonZalithAppScreen(
     }
     val activeAccount = accounts.firstOrNull { it.isActive } ?: accounts.first()
 
-    var capes by remember {
-        mutableStateOf(
-            listOf(
-                CapeItem("c1", "Horizon 26.3 Rust Cape", "Built-in Horizon", 0xFFFF7043, true),
-                CapeItem("c2", "Redstone Melter 1.2 Cape", "ZalithLauncher2Plus Gallery", 0xFFE53935, true),
-                CapeItem("c3", "Migrator Cape", "minecraftcapes.net", 0xFFAB47BC, false),
-                CapeItem("c4", "Vanilla 15th Anniversary", "minecraftcapes.net", 0xFF26A69A, false),
-                CapeItem("c5", "No Cape", "Default", 0xFF546E7A, false)
-            )
-        )
-    }
-
-    val serverJarPicker = rememberLauncherForActivityResult(
+    val assetImporter = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            val ok = HorizonNativeBridge.importUriToDestination(context, uri, ".local/horizon-client/26.3", "server-26.3.jar")
-            Toast.makeText(
-                context,
-                if (ok) "Imported Minecraft 26.3 server.jar for Horizon Prepare!" else "Failed to import server.jar",
-                Toast.LENGTH_SHORT
-            ).show()
+            HorizonNativeBridge.importUriToDestination(context, uri, "", "engine-data.zip")
+            Toast.makeText(context, "Assets imported", Toast.LENGTH_SHORT).show()
         }
     }
 
-    val engineZipPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            val ok = HorizonNativeBridge.importUriToDestination(context, uri, "", "engine-data.zip")
-            Toast.makeText(
-                context,
-                if (ok) "Imported engine-data.zip into Horizon home!" else "Failed to import engine-data.zip",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    val capeGalleryPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            val customName = "Custom_Cape_${capes.size + 1}.png"
-            val ok = HorizonNativeBridge.importUriToDestination(context, uri, "capes", customName)
-            if (ok) {
-                capes = capes + CapeItem(
-                    id = UUID.randomUUID().toString(),
-                    name = customName.removeSuffix(".png"),
-                    source = "Uploaded from Gallery",
-                    accentColorHex = 0xFF42A5F5,
-                    isFavorite = true
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        MaterialTheme.colorScheme.background
+                    )
                 )
-                Toast.makeText(context, "Cape uploaded to Wardrobe!", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        ZalithTopAppBar(
-            activeAccount = activeAccount,
-            sidebarExpanded = sidebarExpanded,
-            onToggleSidebar = { sidebarExpanded = !sidebarExpanded },
-            isRecording = isRecording,
-            recordingSeconds = recordingSeconds,
-            onToggleRecorder = {
-                isRecording = !isRecording
-                if (!isRecording) recordingSeconds = 0
-                Toast.makeText(
-                    context,
-                    if (isRecording) "Game Screen Recorder armed (PLAYBACK_CAPTURE + Video fallback)" else "Screen Recorder stopped",
-                    Toast.LENGTH_SHORT
-                ).show()
-            },
-            onOpenFileManager = { selectedTab = ZalithNavTab.CONTENT },
-            onOpenLogs = { showLogDialog = true },
-            currentPalette = config.themePalette,
-            onCyclePalette = {
-                val values = ZalithThemePalette.entries
-                val next = values[(config.themePalette.ordinal + 1) % values.size]
-                onConfigChange(config.copy(themePalette = next))
-            }
-        )
-
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            ZalithSidebarRail(
-                selectedTab = selectedTab,
-                expanded = sidebarExpanded,
-                onSelectTab = { selectedTab = it }
+            )
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 1. Minimalist Zalith TopBar (48.dp)
+            ZalithMinimalTopBar(
+                onOpenLogs = { showLogDialog = true },
+                onCycleTheme = {
+                    val list = ZalithThemePalette.entries
+                    val next = list[(config.themePalette.ordinal + 1) % list.size]
+                    onConfigChange(config.copy(themePalette = next))
+                }
             )
 
-            AnimatedContent(
-                targetState = selectedTab,
+            // 2. Main 3-Zone Zalith Layout: Left Icon Rail + Clean Center + Right Launch Sidebar
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight()
-                    .padding(12.dp),
-                transitionSpec = {
-                    (slideInHorizontally(animationSpec = tween(220)) { width -> width / 6 } + fadeIn(tween(220)))
-                        .togetherWith(fadeOut(tween(150)))
-                },
-                label = "ZalithSliceInTransition"
-            ) { tab ->
-                when (tab) {
-                    ZalithNavTab.DASHBOARD -> DashboardScreen(
-                        config = config,
-                        activeAccount = activeAccount,
-                        onNavigate = { selectedTab = it },
-                        onOpenLogs = { showLogDialog = true }
-                    )
-                    ZalithNavTab.ACCOUNTS -> AccountsWardrobeScreen(
-                        accounts = accounts,
-                        capes = capes,
-                        onSelectAccount = { id ->
-                            accounts = accounts.map { it.copy(isActive = it.id == id) }
-                        },
-                        onAddAccount = { name, type, chroma, slim ->
-                            val newAcc = ZalithAccount(
-                                id = UUID.randomUUID().toString(),
-                                username = name,
-                                uuid = UUID.randomUUID().toString(),
-                                accountType = type,
-                                chromaNameEnabled = chroma,
-                                slimSkinModel = slim,
-                                selectedCapeName = activeAccount.selectedCapeName,
-                                isActive = true
-                            )
-                            accounts = accounts.map { it.copy(isActive = false) } + newAcc
-                        },
-                        onSelectCape = { capeName ->
-                            accounts = accounts.map {
-                                if (it.isActive) it.copy(selectedCapeName = capeName) else it
-                            }
-                        },
-                        onUploadCapeFromGallery = { capeGalleryPicker.launch("image/*") }
-                    )
-                    ZalithNavTab.ASSETS -> VersionAssetsScreen(
-                        config = config,
-                        onConfigChange = onConfigChange,
-                        onPickServerJar = { serverJarPicker.launch("*/*") },
-                        onPickEngineZip = { engineZipPicker.launch("*/*") }
-                    )
-                    ZalithNavTab.CONTENT -> ContentFileManagerScreen()
-                    ZalithNavTab.CONTROLS -> ControlMapEditorScreen(
-                        config = config,
-                        onConfigChange = onConfigChange
-                    )
-                    ZalithNavTab.SETTINGS -> ZalithSettingsScreen(
-                        config = config,
-                        onConfigChange = onConfigChange,
-                        useDynamicColor = useDynamicColor,
-                        onToggleDynamicColor = onToggleDynamicColor
-                    )
-                }
-            }
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Left Icon-Only Navigation Rail (56.dp)
+                ZalithIconRail(
+                    selectedTab = selectedTab,
+                    onSelectTab = { selectedTab = it }
+                )
 
-            ZalithRightLaunchDock(
-                config = config,
-                activeAccount = activeAccount,
-                onLaunchGame = {
-                    HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                // Center Content Viewport
+                AnimatedContent(
+                    targetState = selectedTab,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    transitionSpec = {
+                        fadeIn(tween(180)).togetherWith(fadeOut(tween(140)))
+                    },
+                    label = "CenterTab"
+                ) { tab ->
+                    when (tab) {
+                        ZalithNavTab.HOME -> CleanHomeViewport(
+                            config = config,
+                            onNavigate = { selectedTab = it }
+                        )
+                        ZalithNavTab.VERSIONS -> CleanVersionsViewport(
+                            config = config,
+                            onConfigChange = onConfigChange,
+                            onImportAssets = { assetImporter.launch("*/*") }
+                        )
+                        ZalithNavTab.FILES -> CleanFilesViewport()
+                        ZalithNavTab.SETTINGS -> CleanSettingsViewport(
+                            config = config,
+                            onConfigChange = onConfigChange,
+                            useDynamicColor = useDynamicColor,
+                            onToggleDynamicColor = onToggleDynamicColor
+                        )
+                    }
                 }
-            )
+
+                // Right Floating Launch Sidebar (196.dp)
+                ZalithLaunchSidebar(
+                    activeAccount = activeAccount,
+                    config = config,
+                    onOpenAccountDialog = { showAccountDialog = true },
+                    onOpenVersions = { selectedTab = ZalithNavTab.VERSIONS },
+                    onLaunchGame = {
+                        HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                    }
+                )
+            }
         }
+    }
+
+    if (showAccountDialog) {
+        AccountManagerModal(
+            accounts = accounts,
+            onSelectAccount = { id ->
+                accounts = accounts.map { it.copy(isActive = it.id == id) }
+            },
+            onAddAccount = { name, type, chroma ->
+                val added = ZalithAccount(
+                    id = UUID.randomUUID().toString(),
+                    username = name,
+                    uuid = UUID.randomUUID().toString(),
+                    accountType = type,
+                    chromaNameEnabled = chroma,
+                    isActive = true
+                )
+                accounts = accounts.map { it.copy(isActive = false) } + added
+            },
+            onDismiss = { showAccountDialog = false }
+        )
     }
 
     if (showLogDialog) {
         AlertDialog(
             onDismissRequest = { showLogDialog = false },
-            title = { Text("Latest Log & Native Diagnostics") },
+            title = { Text("Runtime Log", style = MaterialTheme.typography.titleMedium) },
             text = {
                 val logText = remember { HorizonNativeBridge.readLatestLogs(context) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(300.dp)
+                        .height(240.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF0B0E14))
+                        .background(Color(0xFF0A0D12))
                         .padding(10.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
@@ -315,724 +249,358 @@ fun HorizonZalithAppScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showLogDialog = false }) {
-                    Text("Close")
-                }
+                TextButton(onClick = { showLogDialog = false }) { Text("Close") }
             }
         )
     }
 }
 
 @Composable
-private fun ZalithTopAppBar(
-    activeAccount: ZalithAccount,
-    sidebarExpanded: Boolean,
-    onToggleSidebar: () -> Unit,
-    isRecording: Boolean,
-    recordingSeconds: Int,
-    onToggleRecorder: () -> Unit,
-    onOpenFileManager: () -> Unit,
+private fun ZalithMinimalTopBar(
     onOpenLogs: () -> Unit,
-    currentPalette: ZalithThemePalette,
-    onCyclePalette: () -> Unit
+    onCycleTheme: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "HorizonZ",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "26.3 Rust",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onOpenLogs, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Default.Terminal,
+                    contentDescription = "Log",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onCycleTheme, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Default.Palette,
+                    contentDescription = "Theme",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZalithIconRail(
+    selectedTab: ZalithNavTab,
+    onSelectTab: (ZalithNavTab) -> Unit
 ) {
     Surface(
-        tonalElevation = 4.dp,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
-        modifier = Modifier.fillMaxWidth()
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(56.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onToggleSidebar) {
+            ZalithNavTab.entries.forEach { tab ->
+                val selected = tab == selectedTab
+                val icon = when (tab) {
+                    ZalithNavTab.HOME -> Icons.Default.Home
+                    ZalithNavTab.VERSIONS -> Icons.Default.Layers
+                    ZalithNavTab.FILES -> Icons.Default.Folder
+                    ZalithNavTab.SETTINGS -> Icons.Default.Settings
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else Color.Transparent
+                        )
+                        .clickable { onSelectTab(tab) }
+                ) {
                     Icon(
-                        imageVector = if (sidebarExpanded) Icons.Default.MenuOpen else Icons.Default.Menu,
-                        contentDescription = "Toggle Sidebar"
+                        imageVector = icon,
+                        contentDescription = tab.title,
+                        tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "HorizonZ Launcher 2+",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CleanHomeViewport(
+    config: HorizonConfigState,
+    onNavigate: (ZalithNavTab) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp)
+        ) {
+            // Minimal center hero badge
+            Column(
+                modifier = Modifier.align(Alignment.CenterStart),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        text = "Rust 26.3 • v0.7.4",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        text = "NATIVE RUST ENGINE",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(
-                        if (activeAccount.chromaNameEnabled) {
-                            Brush.horizontalGradient(
-                                listOf(
-                                    Color(0xFFFF7043),
-                                    Color(0xFFFFCA28),
-                                    Color(0xFF26A69A),
-                                    Color(0xFF42A5F5)
-                                )
-                            )
-                        } else {
-                            Brush.horizontalGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                )
-                            )
-                        }
-                    )
-                    .padding(horizontal = 14.dp, vertical = 5.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    tint = Color(0xFF10141C),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "${activeAccount.username} (${activeAccount.accountType.badge})",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF10141C)
+                    text = "Minecraft 26.3",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${config.wgpuBackend} • ${config.resolutionScalePercent}% Scale • ${config.renderDistanceChunks} Chunks",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AssistChip(
-                    onClick = onToggleRecorder,
-                    label = {
-                        Text(
-                            if (isRecording) "REC %02d:%02d".format(recordingSeconds / 60, recordingSeconds % 60)
-                            else "Recorder"
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.FiberManualRecord,
-                            contentDescription = null,
-                            tint = if (isRecording) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                IconButton(onClick = onOpenFileManager) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = "In-Launcher File Manager")
-                }
-                IconButton(onClick = onOpenLogs) {
-                    Icon(Icons.Default.Terminal, contentDescription = "Latest Log")
-                }
-                IconButton(onClick = onCyclePalette) {
-                    Icon(Icons.Default.Palette, contentDescription = currentPalette.label)
-                }
+            // Bottom quick action chips (clean, 1-word labels)
+            Row(
+                modifier = Modifier.align(Alignment.BottomStart),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickGlassPill(Icons.Default.Public, "Worlds") { onNavigate(ZalithNavTab.FILES) }
+                QuickGlassPill(Icons.Default.Extension, "Mods") { onNavigate(ZalithNavTab.FILES) }
+                QuickGlassPill(Icons.Default.Inventory2, "Assets") { onNavigate(ZalithNavTab.VERSIONS) }
+                QuickGlassPill(Icons.Default.Tune, "Config") { onNavigate(ZalithNavTab.SETTINGS) }
             }
         }
     }
 }
 
 @Composable
-private fun ZalithSidebarRail(
-    selectedTab: ZalithNavTab,
-    expanded: Boolean,
-    onSelectTab: (ZalithNavTab) -> Unit
+private fun QuickGlassPill(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
 ) {
     Surface(
-        tonalElevation = 2.dp,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(if (expanded) 195.dp else 64.dp)
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+        modifier = Modifier.clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun CleanVersionsViewport(
+    config: HorizonConfigState,
+    onConfigChange: (HorizonConfigState) -> Unit,
+    onImportAssets: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxSize()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 8.dp, horizontal = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            ZalithNavTab.entries.forEach { tab ->
-                val isSelected = tab == selectedTab
-                val icon = when (tab) {
-                    ZalithNavTab.DASHBOARD -> Icons.Default.Home
-                    ZalithNavTab.ACCOUNTS -> Icons.Default.AccountCircle
-                    ZalithNavTab.ASSETS -> Icons.Default.Inventory2
-                    ZalithNavTab.CONTENT -> Icons.Default.Extension
-                    ZalithNavTab.CONTROLS -> Icons.Default.Gamepad
-                    ZalithNavTab.SETTINGS -> Icons.Default.Tune
-                }
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelectTab(tab) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = tab.title,
-                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (expanded) {
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = tab.title,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = tab.subtitle,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Instances & Assets", style = MaterialTheme.typography.titleMedium)
+                FilledTonalButton(onClick = onImportAssets, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Import Assets", fontSize = 12.sp)
                 }
             }
-        }
-    }
-}
 
-@Composable
-private fun DashboardScreen(
-    config: HorizonConfigState,
-    activeAccount: ZalithAccount,
-    onNavigate: (ZalithNavTab) -> Unit,
-    onOpenLogs: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.padding(14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Minecraft: Java Edition 26.3 — 100% Native Rust Engine",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Powered by horizon-rust/horizon (v0.2.97) + Vasysik/horizon-android (v0.7.4) with Star1xr/ZalithLauncher2Plus Material 3 UI. Zero JVM overhead, 281 vanilla parity harnesses.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilledTonalButton(onClick = { onNavigate(ZalithNavTab.ACCOUNTS) }) {
-                        Icon(Icons.Default.Checkroom, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Capes & Wardrobe")
-                    }
-                    FilledTonalButton(onClick = { onNavigate(ZalithNavTab.ASSETS) }) {
-                        Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Prepare 26.3 Assets")
-                    }
-                    FilledTonalButton(onClick = { onNavigate(ZalithNavTab.CONTROLS) }) {
-                        Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Touch HUD Editor")
-                    }
-                    FilledTonalButton(onClick = onOpenLogs) {
-                        Icon(Icons.Default.Subject, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Full Latest Log")
-                    }
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "Changelog • HorizonZ 2.4.10+ / Rust 0.2.97",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "• Native Rust 26.3 Engine: 100% parity across all 14 subsystems (Worldgen, Redstone, Mob AI, Raids, Anvil 1.8–26.3 saves).\n" +
-                            "• Android Port (v0.7.3/0.7.4): NativeActivity libhorizon_android.so, SAF DocumentsProvider, Touch HUD & Gamepad support.\n" +
-                            "• Zalith Plus 1.3 UI: Cape Wardrobe, Chroma Names, Distant Terrain up to 1024 chunks, 70% default resolution scale, Screen Recorder.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Click for more →",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.clickable { onNavigate(ZalithNavTab.ASSETS) }
-                    )
-                }
-            }
-
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "Daily Hours & Engine Telemetry",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "• Active Renderer: wgpu (${config.wgpuBackend}) • Preset: ${config.graphicsPreset}\n" +
-                            "• Distant Terrain: ${config.distantTerrainChunks} chunks • Resolution: ${config.resolutionScalePercent}%\n" +
-                            "• Active Cape: ${activeAccount.selectedCapeName} (${if (activeAccount.slimSkinModel) "Slim" else "Classic"} model)\n" +
-                            "• Playtime Weekly Grid: Mon 1.5h | Tue 2.1h | Wed 1.8h | Thu 3.2h",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Click for more →",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { onNavigate(ZalithNavTab.SETTINGS) }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AccountsWardrobeScreen(
-    accounts: List<ZalithAccount>,
-    capes: List<CapeItem>,
-    onSelectAccount: (String) -> Unit,
-    onAddAccount: (String, AccountType, Boolean, Boolean) -> Unit,
-    onSelectCape: (String) -> Unit,
-    onUploadCapeFromGallery: () -> Unit
-) {
-    var newUsername by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf(AccountType.OFFLINE) }
-    var enableChroma by remember { mutableStateOf(true) }
-    var slimModel by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Card(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(14.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Accounts & Auth (26.3 Online / Offline / Ely.by)",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                accounts.forEach { acc ->
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (acc.isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelectAccount(acc.id) }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = acc.username + if (acc.chromaNameEnabled) " [CHROMA]" else "",
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "${acc.accountType.badge} • Cape: ${acc.selectedCapeName}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            RadioButton(selected = acc.isActive, onClick = { onSelectAccount(acc.id) })
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(Icons.Default.SportsEsports, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column {
+                            Text("Minecraft 26.3 (Horizon Native)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("libhorizon_android.so • Direct Boot", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                OutlinedTextField(
-                    value = newUsername,
-                    onValueChange = { newUsername = it },
-                    label = { Text("New Player Username") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    AccountType.entries.forEach { type ->
-                        FilterChip(
-                            selected = selectedType == type,
-                            onClick = { selectedType = type },
-                            label = { Text(type.name, fontSize = 10.sp) }
-                        )
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = enableChroma, onCheckedChange = { enableChroma = it })
-                    Text("Chroma Name", fontSize = 12.sp)
-                    Spacer(Modifier.width(12.dp))
-                    Checkbox(checked = slimModel, onCheckedChange = { slimModel = it })
-                    Text("Slim Skin (Alex 3px)", fontSize = 12.sp)
-                }
-                Button(
-                    onClick = {
-                        if (newUsername.isNotBlank()) {
-                            onAddAccount(newUsername.trim(), selectedType, enableChroma, slimModel)
-                            newUsername = ""
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Add Account Profile")
+                    RadioButton(selected = true, onClick = {})
                 }
             }
-        }
 
-        Card(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Capes & Wardrobe (ZL2+ 1.3)",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    FilledTonalButton(onClick = onUploadCapeFromGallery) {
-                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Upload Cape from Gallery", fontSize = 11.sp)
-                    }
-                }
-
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(capes) { cape ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelectCape(cape.name) }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(cape.accentColorHex))
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Column {
-                                        Text(cape.name, fontWeight = FontWeight.SemiBold)
-                                        Text(cape.source, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                Icon(
-                                    imageVector = if (cape.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VersionAssetsScreen(
-    config: HorizonConfigState,
-    onConfigChange: (HorizonConfigState) -> Unit,
-    onPickServerJar: () -> Unit,
-    onPickEngineZip: () -> Unit
-) {
-    val context = LocalContext.current
-    var filterTab by remember { mutableStateOf("Stable 26.3") }
-    val home = remember { HorizonNativeBridge.ensureHomeDirectories(context) }
-    val hasEngineZip = remember(config) { File(home, "engine-data.zip").exists() }
-    val hasServerJar = remember(config) { File(home, ".local/horizon-client/26.3/server-26.3.jar").exists() }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf("Stable 26.3", "Horizon Nightly (0.2.97)", "Android Port (0.7.4)").forEach { pill ->
-                FilterChip(
-                    selected = filterTab == pill,
-                    onClick = { filterTab = pill },
-                    label = { Text(pill) }
-                )
-            }
-        }
-
-        Card(
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Minecraft: Java Edition 26.3 Asset Preparation (horizon-prepare & --public mode)",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Horizon runs 100% natively in Rust without a JVM. For legal compliance, it contains no proprietary Mojang assets in the repository. You can either enable Public On-Device Asset Streaming (--public mode from Vasysik/horizon-android) or import your own Minecraft 26.3 server.jar / engine-data.zip.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Public On-Device Asset Streaming (HORIZON_ANDROID_PUBLIC=1)", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Automatically prepares & downloads required 26.3 textures/sounds on device launch",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text("Auto-Prepare Assets on Device", fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     Switch(
                         checked = config.publicOnDeviceAssetDownload,
                         onCheckedChange = { onConfigChange(config.copy(publicOnDeviceAssetDownload = it)) }
                     )
                 }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onPickEngineZip) {
-                        Icon(Icons.Default.Archive, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (hasEngineZip) "Update engine-data.zip (Present)" else "Import engine-data.zip")
-                    }
-                    FilledTonalButton(onClick = onPickServerJar) {
-                        Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (hasServerJar) "26.3 server.jar Ready" else "Import 26.3 server.jar")
-                    }
-                }
             }
         }
     }
 }
 
 @Composable
-private fun ContentFileManagerScreen() {
+private fun CleanFilesViewport() {
     val context = LocalContext.current
     val home = remember { HorizonNativeBridge.ensureHomeDirectories(context) }
     var currentFolder by remember { mutableStateOf("saves") }
-    var refreshTrigger by remember { mutableIntStateOf(0) }
+    var refreshCount by remember { mutableIntStateOf(0) }
 
-    val folders = listOf(
-        "saves" to "Worlds (Anvil 1.8–26.3)",
-        "resourcepacks" to "Resource Packs",
-        "datapacks" to "Data Packs",
-        "mods" to "Horizon Wasm Mods (.wasm)",
-        "shaderpacks" to "Shader Packs"
+    val tabs = listOf(
+        "saves" to "Worlds",
+        "resourcepacks" to "Packs",
+        "mods" to "Mods",
+        "shaderpacks" to "Shaders"
     )
 
     val dirFile = File(home, currentFolder).apply { mkdirs() }
-    val children = remember(currentFolder, refreshTrigger) {
+    val itemsList = remember(currentFolder, refreshCount) {
         dirFile.listFiles()?.toList().orEmpty()
     }
 
-    val fileImporter = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            val name = "Imported_${System.currentTimeMillis()}.pack"
-            HorizonNativeBridge.importUriToDestination(context, uri, currentFolder, name)
-            refreshTrigger += 1
+            HorizonNativeBridge.importUriToDestination(context, uri, currentFolder, "item_${System.currentTimeMillis()}.zip")
+            refreshCount += 1
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                folders.forEach { (folderKey, label) ->
-                    FilterChip(
-                        selected = currentFolder == folderKey,
-                        onClick = { currentFolder = folderKey },
-                        label = { Text(label, fontSize = 11.sp) }
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilledTonalButton(
-                    onClick = {
-                        File(dirFile, "New_Folder_${children.size + 1}").mkdirs()
-                        refreshTrigger += 1
-                    }
-                ) {
-                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("New Folder", fontSize = 11.sp)
-                }
-                Button(onClick = { fileImporter.launch("*/*") }) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Import File", fontSize = 11.sp)
-                }
-            }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxSize(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = "SAF DocumentsProvider Bridge: content://dev.horizon.android.documents/tree/root/$currentFolder",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                Spacer(Modifier.height(8.dp))
-                if (children.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No items in /$currentFolder yet. Use 'Import File', 'New Folder', or the Android Files app (HorizonZ DocumentsProvider).",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    tabs.forEach { (folder, label) ->
+                        FilterChip(
+                            selected = currentFolder == folder,
+                            onClick = { currentFolder = folder },
+                            label = { Text(label, fontSize = 12.sp) }
                         )
                     }
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(children) { item ->
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.surface,
-                                modifier = Modifier.fillMaxWidth()
+                }
+                FilledTonalButton(
+                    onClick = { picker.launch("*/*") },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Import", fontSize = 12.sp)
+                }
+            }
+
+            if (itemsList.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Empty folder", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(itemsList) { file ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Text(file.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                IconButton(
+                                    onClick = {
+                                        file.deleteRecursively()
+                                        refreshCount += 1
+                                    },
+                                    modifier = Modifier.size(28.dp)
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = if (item.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Column {
-                                            Text(item.name, fontWeight = FontWeight.SemiBold)
-                                            Text("${item.length()} bytes", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            item.deleteRecursively()
-                                            refreshTrigger += 1
-                                        }
-                                    ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete")
-                                    }
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
@@ -1044,185 +612,132 @@ private fun ContentFileManagerScreen() {
 }
 
 @Composable
-private fun ControlMapEditorScreen(
-    config: HorizonConfigState,
-    onConfigChange: (HorizonConfigState) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = "Touch Overlay, HUD Editor & Gamepad Mapping (bedrock-controls.json)",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = "Directly configures crates/horizon-client/src/touch* and crates/horizon-client/src/game/android_input.rs.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = config.splitTouchControls,
-                        onCheckedChange = { onConfigChange(config.copy(splitTouchControls = it)) }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Split Touch Crosshair")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = config.hideControllerWhileLoading,
-                        onCheckedChange = { onConfigChange(config.copy(hideControllerWhileLoading = it)) }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Hide Controller While Loading (ZL2+ 1.2)")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = config.autoJump,
-                        onCheckedChange = { onConfigChange(config.copy(autoJump = it)) }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Auto-Jump")
-                }
-            }
-
-            Text("D-Pad & Touch Button Scale: ${(config.dpadScale * 100).toInt()}%")
-            Slider(
-                value = config.dpadScale,
-                onValueChange = { onConfigChange(config.copy(dpadScale = it)) },
-                valueRange = 0.5f..1.75f
-            )
-
-            Text("Touch HUD Opacity: ${(config.dpadOpacity * 100).toInt()}%")
-            Slider(
-                value = config.dpadOpacity,
-                onValueChange = { onConfigChange(config.copy(dpadOpacity = it)) },
-                valueRange = 0.2f..1.0f
-            )
-        }
-    }
-}
-
-@Composable
-private fun ZalithSettingsScreen(
+private fun CleanSettingsViewport(
     config: HorizonConfigState,
     onConfigChange: (HorizonConfigState) -> Unit,
     useDynamicColor: Boolean,
     onToggleDynamicColor: (Boolean) -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxSize()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp)
+                .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                text = "HorizonZ & ZalithLauncher2Plus Settings Remake",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
+            // Row 1: Renderer & Graphics Preset
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("wgpu Backend:", fontWeight = FontWeight.SemiBold)
-                listOf("Vulkan", "GLES3").forEach { backend ->
-                    FilterChip(
-                        selected = config.wgpuBackend == backend,
-                        onClick = { onConfigChange(config.copy(wgpuBackend = backend)) },
-                        label = { Text(backend) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Renderer", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf("Vulkan", "GLES3").forEach { item ->
+                        FilterChip(
+                            selected = config.wgpuBackend == item,
+                            onClick = { onConfigChange(config.copy(wgpuBackend = item)) },
+                            label = { Text(item, fontSize = 11.sp) }
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Preset", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf("Fast", "Fancy", "Ultra").forEach { preset ->
+                        FilterChip(
+                            selected = config.graphicsPreset == preset,
+                            onClick = { onConfigChange(config.copy(graphicsPreset = preset)) },
+                            label = { Text(preset, fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+
+            // Compact Sliders
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Resolution: ${config.resolutionScalePercent}%", fontSize = 12.sp)
+                    Slider(
+                        value = config.resolutionScalePercent.toFloat(),
+                        onValueChange = { onConfigChange(config.copy(resolutionScalePercent = it.toInt())) },
+                        valueRange = 40f..100f
                     )
                 }
-                Spacer(Modifier.width(12.dp))
-                Text("Preset:", fontWeight = FontWeight.SemiBold)
-                listOf("Vanilla", "Fast", "Fancy", "Ultra").forEach { preset ->
-                    FilterChip(
-                        selected = config.graphicsPreset == preset,
-                        onClick = { onConfigChange(config.copy(graphicsPreset = preset)) },
-                        label = { Text(preset) }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Render Distance: ${config.renderDistanceChunks}", fontSize = 12.sp)
+                    Slider(
+                        value = config.renderDistanceChunks.toFloat(),
+                        onValueChange = { onConfigChange(config.copy(renderDistanceChunks = it.toInt())) },
+                        valueRange = 4f..32f
                     )
                 }
             }
 
-            Text("Resolution Scale: ${config.resolutionScalePercent}% (ZL2+ Default: 70%)")
-            Slider(
-                value = config.resolutionScalePercent.toFloat(),
-                onValueChange = { onConfigChange(config.copy(resolutionScalePercent = it.toInt())) },
-                valueRange = 40f..100f
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Distant Terrain: ${config.distantTerrainChunks}", fontSize = 12.sp)
+                    Slider(
+                        value = config.distantTerrainChunks.toFloat(),
+                        onValueChange = { onConfigChange(config.copy(distantTerrainChunks = it.toInt())) },
+                        valueRange = 16f..1024f
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Button Size: ${(config.dpadScale * 100).toInt()}%", fontSize = 12.sp)
+                    Slider(
+                        value = config.dpadScale,
+                        onValueChange = { onConfigChange(config.copy(dpadScale = it)) },
+                        valueRange = 0.5f..1.5f
+                    )
+                }
+            }
 
-            Text("Horizon Distant Terrain: ${config.distantTerrainChunks} Chunks (Up to 1024 Chunks)")
-            Slider(
-                value = config.distantTerrainChunks.toFloat(),
-                onValueChange = { onConfigChange(config.copy(distantTerrainChunks = it.toInt())) },
-                valueRange = 16f..1024f
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = config.enableMinimap,
-                        onCheckedChange = { onConfigChange(config.copy(enableMinimap = it)) }
-                    )
-                    Text("Horizon Minimap")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = config.enableZoom,
-                        onCheckedChange = { onConfigChange(config.copy(enableZoom = it)) }
-                    )
-                    Text("Zoom Key")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = config.closedCaptions,
-                        onCheckedChange = { onConfigChange(config.copy(closedCaptions = it)) }
-                    )
-                    Text("Subtitles / Captions")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = useDynamicColor,
-                        onCheckedChange = onToggleDynamicColor
-                    )
-                    Text("Android 12+ Material You Wallpaper Color")
-                }
+            // Clean Toggle Chips
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = config.splitTouchControls,
+                    onClick = { onConfigChange(config.copy(splitTouchControls = !config.splitTouchControls)) },
+                    label = { Text("Split Touch", fontSize = 11.sp) }
+                )
+                FilterChip(
+                    selected = config.autoJump,
+                    onClick = { onConfigChange(config.copy(autoJump = !config.autoJump)) },
+                    label = { Text("Auto Jump", fontSize = 11.sp) }
+                )
+                FilterChip(
+                    selected = config.enableMinimap,
+                    onClick = { onConfigChange(config.copy(enableMinimap = !config.enableMinimap)) },
+                    label = { Text("Minimap", fontSize = 11.sp) }
+                )
+                FilterChip(
+                    selected = useDynamicColor,
+                    onClick = { onToggleDynamicColor(!useDynamicColor) },
+                    label = { Text("Material You", fontSize = 11.sp) }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ZalithRightLaunchDock(
-    config: HorizonConfigState,
+private fun ZalithLaunchSidebar(
     activeAccount: ZalithAccount,
+    config: HorizonConfigState,
+    onOpenAccountDialog: () -> Unit,
+    onOpenVersions: () -> Unit,
     onLaunchGame: () -> Unit
 ) {
     Surface(
-        tonalElevation = 4.dp,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
         modifier = Modifier
             .fillMaxHeight()
-            .width(220.dp)
+            .width(196.dp)
     ) {
         Column(
             modifier = Modifier
@@ -1230,55 +745,163 @@ private fun ZalithRightLaunchDock(
                 .padding(12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Launch Instance",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
+            // Top: Account Profile Selector Card
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenAccountDialog() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Horizon Rust 26.3", fontWeight = FontWeight.Bold)
-                        Text("Engine: v0.2.97 • Port: v0.7.4", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Backend: wgpu (${config.wgpuBackend})", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                        Text("Resolution: ${config.resolutionScalePercent}%", fontSize = 11.sp)
-                        Text("Distant Chunks: ${config.distantTerrainChunks}", fontSize = 11.sp)
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                    ) {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
-                }
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Player: ${activeAccount.username}", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                        Text("Cape: ${activeAccount.selectedCapeName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = activeAccount.username,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = activeAccount.accountType.badge,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
 
-            Button(
-                onClick = onLaunchGame,
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp)
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "PLAY 26.3",
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 16.sp
-                )
+            // Bottom: Version Card + Prominent PLAY Button
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenVersions() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("26.3 Rust", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(config.wgpuBackend, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                        }
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onLaunchGame,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "PLAY",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun AccountManagerModal(
+    accounts: List<ZalithAccount>,
+    onSelectAccount: (String) -> Unit,
+    onAddAccount: (String, AccountType, Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var newName by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(AccountType.OFFLINE) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Accounts", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                accounts.forEach { acc ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (acc.isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectAccount(acc.id) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${acc.username} (${acc.accountType.badge})", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            RadioButton(selected = acc.isActive, onClick = { onSelectAccount(acc.id) })
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    placeholder = { Text("Username") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(AccountType.OFFLINE, AccountType.MICROSOFT).forEach { t ->
+                        FilterChip(
+                            selected = selectedType == t,
+                            onClick = { selectedType = t },
+                            label = { Text(t.badge, fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (newName.isNotBlank()) {
+                        onAddAccount(newName.trim(), selectedType, false)
+                        newName = ""
+                    }
+                    onDismiss()
+                }
+            ) {
+                Text("Done")
+            }
+        }
+    )
 }

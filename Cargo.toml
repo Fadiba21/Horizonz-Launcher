@@ -5,18 +5,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.4"
+version = "0.8.0"
 edition = "2021"
 license = "MIT AND GPL-3.0-only"
 repository = "https://github.com/Fadiba21/Horizonz-Launcher"
 
 [profile.dev]
 opt-level = 1
-
-[profile.fast]
-inherits = "dev"
-opt-level = 2
-debug = 1
 
 [profile.release]
 opt-level = 3
