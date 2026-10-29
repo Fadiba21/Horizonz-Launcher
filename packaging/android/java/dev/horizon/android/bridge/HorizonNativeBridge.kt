@@ -11,19 +11,42 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
+data class AssetInstallStatus(
+    val ready: Boolean = false,
+    val running: Boolean = false,
+    val stage: String = "Idle",
+    val done: Long = 0L,
+    val total: Long = 100L,
+    val error: String = ""
+) {
+    val progressFraction: Float
+        get() = if (total > 0L) (done.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
+
+    val percent: Int
+        get() = (progressFraction * 100f).toInt().coerceIn(0, 100)
+}
+
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
+    private var nativeLoaded = false
 
     init {
         try {
             System.loadLibrary("horizon_android")
+            nativeLoaded = true
         } catch (e: UnsatisfiedLinkError) {
-            Log.w(TAG, "libhorizon_android.so will be loaded on native activity launch: ${e.message}")
+            Log.w(TAG, "libhorizon_android.so not yet loaded: ${e.message}")
         }
     }
 
     @JvmStatic
-    external fun nativeGetEngineStatus(home: String): String
+    external fun nativeIsGameInstalled(home: String): Boolean
+
+    @JvmStatic
+    external fun nativeStartOfficialInstall(home: String): Boolean
+
+    @JvmStatic
+    external fun nativeGetInstallProgress(home: String): String
 
     fun ensureHomeDirectories(context: Context): File {
         val home = context.filesDir
@@ -41,6 +64,19 @@ object HorizonNativeBridge {
             File(home, sub).mkdirs()
         }
 
+        // Extract engine-data.zip from APK assets to filesDir/engine-data.zip if missing
+        val engineZip = File(home, "engine-data.zip")
+        if (!engineZip.exists() || engineZip.length() < 1024L) {
+            try {
+                context.assets.open("engine-data.zip").use { input ->
+                    FileOutputStream(engineZip).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (ignored: Exception) {
+            }
+        }
+
         val controlsFile = File(home, "bedrock-controls.json")
         if (!controlsFile.exists()) {
             try {
@@ -53,6 +89,74 @@ object HorizonNativeBridge {
             }
         }
         return home
+    }
+
+    fun isMinecraft26Ready(context: Context): Boolean {
+        val home = ensureHomeDirectories(context)
+        if (nativeLoaded) {
+            try {
+                if (nativeIsGameInstalled(home.absolutePath)) return true
+            } catch (ignored: Throwable) {
+            }
+        }
+        val root26 = File(home, ".local/horizon-client/26.3")
+        return File(root26, "android-downloads-v2.json").isFile
+    }
+
+    fun startMinecraft26Download(context: Context): Boolean {
+        val home = ensureHomeDirectories(context)
+        if (nativeLoaded) {
+            try {
+                return nativeStartOfficialInstall(home.absolutePath)
+            } catch (e: Throwable) {
+                Log.e(TAG, "nativeStartOfficialInstall failed: ${e.message}")
+            }
+        }
+        return false
+    }
+
+    fun pollInstallProgress(context: Context): AssetInstallStatus {
+        val home = ensureHomeDirectories(context)
+        if (nativeLoaded) {
+            try {
+                val raw = nativeGetInstallProgress(home.absolutePath)
+                if (raw.isNotEmpty()) {
+                    val obj = JSONObject(raw)
+                    return AssetInstallStatus(
+                        ready = obj.optBoolean("ready", false),
+                        running = obj.optBoolean("running", false),
+                        stage = obj.optString("stage", "Idle"),
+                        done = obj.optLong("done", 0L),
+                        total = obj.optLong("total", 100L),
+                        error = obj.optString("error", "")
+                    )
+                }
+            } catch (ignored: Throwable) {
+            }
+        }
+        val progressFile = File(home, "zalith-install-progress.json")
+        if (progressFile.exists()) {
+            try {
+                val obj = JSONObject(progressFile.readText())
+                return AssetInstallStatus(
+                    ready = obj.optBoolean("ready", isMinecraft26Ready(context)),
+                    running = obj.optBoolean("running", false),
+                    stage = obj.optString("stage", "Idle"),
+                    done = obj.optLong("done", 0L),
+                    total = obj.optLong("total", 100L),
+                    error = obj.optString("error", "")
+                )
+            } catch (ignored: Exception) {
+            }
+        }
+        val ready = isMinecraft26Ready(context)
+        return AssetInstallStatus(
+            ready = ready,
+            running = false,
+            stage = if (ready) "Ready" else "Not Installed",
+            done = if (ready) 100L else 0L,
+            total = 100L
+        )
     }
 
     fun writeEngineConfigs(
@@ -83,7 +187,7 @@ object HorizonNativeBridge {
         File(home, "options.txt").writeText(optionsTxt)
 
         val horizonExtras = buildString {
-            appendLine("# Generated by HorizonZ Launcher (ZalithLauncher2Plus UI)")
+            appendLine("# Generated by HorizonZ Launcher")
             appendLine("graphicsPreset=${config.graphicsPreset.lowercase()}")
             appendLine("distantTerrainChunks=${config.distantTerrainChunks}")
             appendLine("resolutionScale=${config.resolutionScalePercent / 100.0f}")
@@ -100,25 +204,8 @@ object HorizonNativeBridge {
             appendLine("touchDpadOpacity=${config.dpadOpacity}")
             appendLine("playerName=${activeAccount.username}")
             appendLine("accountType=${activeAccount.accountType.name.lowercase()}")
-            appendLine("skinModel=${if (activeAccount.slimSkinModel) "slim" else "classic"}")
-            appendLine("selectedCape=${activeAccount.selectedCapeName}")
-            appendLine("chromaName=${activeAccount.chromaNameEnabled}")
         }
         File(home, "horizon-extras.txt").writeText(horizonExtras)
-
-        val controlsJson = JSONObject().apply {
-            put("version", 2)
-            put("layout_name", "HorizonZ Zalith Custom")
-            put("split_touch", config.splitTouchControls)
-            put("dpad_scale", config.dpadScale.toDouble())
-            put("dpad_opacity", config.dpadOpacity.toDouble())
-            put("hotbar_scale", config.hotbarScale.toDouble())
-            put("hide_while_loading", config.hideControllerWhileLoading)
-            put("auto_jump", config.autoJump)
-            put("toggle_sprint", config.toggleSprint)
-            put("toggle_sneak", config.toggleSneak)
-        }
-        File(home, "bedrock-controls.json").writeText(controlsJson.toString(2))
     }
 
     fun importUriToDestination(context: Context, uri: Uri, subFolder: String, targetFileName: String): Boolean {
@@ -134,7 +221,7 @@ object HorizonNativeBridge {
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to import URI $uri to $subFolder/$targetFileName", e)
+            Log.e(TAG, "Failed to import URI $uri", e)
             false
         }
     }
@@ -144,24 +231,17 @@ object HorizonNativeBridge {
         val latestLog = File(home, "logs/latest.log")
         val androidErr = File(home, "android-error.txt")
         val sb = StringBuilder()
-        sb.appendLine("=== HorizonZ Launcher 2+ (Rust 26.3 Engine) Runtime Log ===")
-        sb.appendLine("Home Directory: ${home.absolutePath}")
-        sb.appendLine("Engine Target : Horizon 0.2.97 / Android Port 0.7.4 (Minecraft Java 26.3)")
-        sb.appendLine("-----------------------------------------------------------")
         if (androidErr.exists()) {
             sb.appendLine("[android-error.txt]")
             sb.appendLine(androidErr.readText())
-            sb.appendLine("-----------------------------------------------------------")
         }
         if (latestLog.exists()) {
             sb.appendLine("[logs/latest.log]")
             sb.appendLine(latestLog.readText())
-        } else {
-            sb.appendLine("[INFO] Horizon native engine ready.")
-            sb.appendLine("[INFO] Subsystem parity: 14/14 subsystems verified against Vanilla 26.3 (281 differential harnesses).")
-            sb.appendLine("[INFO] Graphics backend: wgpu (Vulkan / OpenGL ES 3.0 fallback).")
-            sb.appendLine("[INFO] DocumentsProvider registered at authority: dev.horizon.android.documents")
-            sb.appendLine("[INFO] Click 'PLAY 26.3' to start HorizonActivity (libhorizon_android.so).")
+        }
+        if (sb.isEmpty()) {
+            sb.appendLine("Horizon 26.3 Rust Engine Ready.")
+            sb.appendLine("Game Installed: ${isMinecraft26Ready(context)}")
         }
         return sb.toString()
     }

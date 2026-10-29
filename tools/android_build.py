@@ -78,8 +78,7 @@ def prepare_assets(public_mode: bool):
             shutil.copy2(src, GRADLE_ASSETS_DIR / doc_name)
 
     controls_src = ANDROID_PKG_DIR / "bedrock-controls.json"
-    packaged_controls = ANDROID_PKG_DIR / "assets" / "bedrock-controls.json"
-    if controls_src.exists() and not packaged_controls.exists():
+    if controls_src.exists():
         shutil.copy2(controls_src, GRADLE_ASSETS_DIR / "bedrock-controls.json")
 
     engine_zip = GRADLE_ASSETS_DIR / "engine-data.zip"

@@ -7,22 +7,13 @@ on:
   pull_request:
     branches: [ "main", "master", "android" ]
   workflow_dispatch:
-    inputs:
-      build_mode:
-        description: "Build mode: 'native_runtime' (compiles HorizonZ's own native Rust libhorizon_android.so from source) or 'full_source' (syncs full upstream workspace & compiles)"
-        required: false
-        default: "native_runtime"
-        type: choice
-        options:
-          - native_runtime
-          - full_source
 
 permissions:
   contents: write
 
 jobs:
   build-horizonz-apk:
-    name: Build HorizonZ - Launcher APK (${{ matrix.abi }})
+    name: Build HorizonZ Real Engine APK (${{ matrix.abi }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -31,12 +22,10 @@ jobs:
         include:
           - abi: arm64-v8a
             rust_target: aarch64-linux-android
+            clang_prefix: aarch64-linux-android28
           - abi: armeabi-v7a
             rust_target: armv7-linux-androideabi
-          - abi: x86_64
-            rust_target: x86_64-linux-android
-          - abi: x86
-            rust_target: i686-linux-android
+            clang_prefix: armv7a-linux-androideabi28
 
     steps:
       - name: Checkout HorizonZ - Launcher
@@ -69,22 +58,58 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Sync Upstream Engine (Optional full_source mode)
-        if: ${{ github.event.inputs.build_mode == 'full_source' }}
+      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply Direct-Boot Patch
         run: |
-          chmod +x scripts/sync_upstream.sh
-          ./scripts/sync_upstream.sh
-          python3 scripts/patch_upstream_direct_game.py
+          rm -rf /tmp/horizon-upstream
+          git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
+          # Copy the real Rust workspace crates, third_party, mods, Cargo.toml, Cargo.lock, research-lock.json
+          # while preserving HorizonZ's packaging/android UI and scripts
+          rsync -a --exclude='packaging/android' --exclude='.git' --exclude='.github' /tmp/horizon-upstream/ ./
+          rm -rf /tmp/horizon-upstream
 
-      - name: Compile Native Rust Runtime (libhorizon_android.so) from Source (${{ matrix.abi }})
+          # Patch launcher.rs for direct game boot (game::android_game()) and android_main.rs for JNI official_install hooks
+          python3 scripts/patch_horizon_direct_boot.py
+
+      - name: Cache Rust Engine Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: horizon-real-engine-${{ matrix.rust_target }}
+
+      - name: Compile Real Horizon Rust Engine (libhorizon_android.so) & Stage Assets (${{ matrix.abi }})
         run: |
           mkdir -p .local/android/gradle-jni/${{ matrix.abi }}
           mkdir -p .local/android/gradle-assets
-          cp -f LICENSE.txt .local/android/gradle-assets/ || true
+          cp -f LICENSE .local/android/gradle-assets/LICENSE.txt || cp -f LICENSE.txt .local/android/gradle-assets/LICENSE.txt || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
+          cp -f packaging/android/bedrock-controls.json .local/android/gradle-assets/ || true
 
-          python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
-          ls -lh .local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so
+          # Extract official engine-data.zip from Vasysik/horizon-android v0.7.3 release into assets
+          APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
+          if curl -fsSL -L "$APK_URL" -o /tmp/upstream_assets.apk; then
+            unzip -q -o /tmp/upstream_assets.apk "assets/*" -d /tmp/upstream_assets_dir || true
+            if [ -d "/tmp/upstream_assets_dir/assets" ]; then
+              cp -rf /tmp/upstream_assets_dir/assets/* .local/android/gradle-assets/ || true
+            fi
+            rm -rf /tmp/upstream_assets.apk /tmp/upstream_assets_dir
+          fi
+
+          TOOLCHAIN_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export HORIZON_ANDROID_PUBLIC=1
+          export CARGO_PROFILE_RELEASE_LTO=false
+          export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+          export CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+
+          TRIPLE_UNDERSCORE="$(echo "${{ matrix.rust_target }}" | tr '-' '_')"
+          TRIPLE_UPPER="$(echo "$TRIPLE_UNDERSCORE" | tr '[:lower:]' '[:upper:]')"
+          export "CC_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
+          export "CXX_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang++"
+          export "AR_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/llvm-ar"
+          export "CARGO_TARGET_${TRIPLE_UPPER}_LINKER=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
+
+          cargo build --release -p horizon-android --target ${{ matrix.rust_target }}
+          cp -f "target/${{ matrix.rust_target }}/release/libhorizon_android.so" ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
+          "$TOOLCHAIN_BIN/llvm-strip" --strip-unneeded ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" || true
+          ls -lh ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -110,14 +135,14 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.8.0-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.9.0-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-0.8.0-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-0.8.0-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-0.9.0-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-0.9.0-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
@@ -141,12 +166,13 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.8.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v0.8.0 (Build #${{ github.run_number }} • Native Rust .so + Clean Zalith UI)"
+          tag_name: v0.9.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v0.9.0 (Build #${{ github.run_number }} • Real Horizon 26.3 Engine + Asset Installer + Clean Zalith UI)"
           body: |
-            ## HorizonZ - Launcher v0.8.0 (Native Rust Runtime + Minimalist Zalith Launcher 2 UI)
-            - **100% Native Compiled `.so` Runtime**: Compiles `libhorizon_android.so` directly from Rust source (`crates/horizon-android`) via Cargo + Android NDK 28 (`android-activity` `native-activity` + EGL/OpenGL ES 3.0 & JNI runtime) — no longer uses the prebuilt `Vasysik/horizon-android` launcher APK.
-            - **Clean Minimalist Zalith Launcher 2 UI**: Sleek 3-zone landscape Material 3 design (Icon-only Left Navigation Rail, Clean Glassmorphic Center Viewport, Floating Right Launch Sidebar with Account Modal & Play Button).
+            ## HorizonZ - Launcher v0.9.0 (Real Minecraft 26.3 Rust Engine + Built-in Asset Downloader + Clean Zalith UI)
+            - **Real `Vasysik/horizon-android` + `horizon-rust/horizon` Engine Compiled from Source**: Clones the full `Vasysik/horizon-android` Rust workspace (`crates/horizon-client`, `crates/horizon-world`, `crates/horizon-assets`, `crates/horizon-protocol`, `wgpu`) and compiles `libhorizon_android.so` natively.
+            - **Built-in Official Minecraft 26.3 Game & Asset Downloader (`official_install`)**: Download and prepare the full Minecraft 26.3 client, server, textures, sounds, and worldgen data directly from the Zalith Material 3 Android UI via JNI (`nativeStartOfficialInstall`, `nativeGetInstallProgress`).
+            - **Direct Boot into `game::android_game()`**: Patched `crates/horizon-client/src/android/launcher.rs` so clicking **PLAY** skips Vasysik's built-in Rust launcher menu and boots straight into the real Minecraft 26.3 Rust game.
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt

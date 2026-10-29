@@ -38,9 +38,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.horizon.android.bridge.AssetInstallStatus
 import dev.horizon.android.bridge.HorizonNativeBridge
 import dev.horizon.android.model.*
 import dev.horizon.android.ui.theme.HorizonZalithTheme
+import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
 
@@ -84,6 +86,15 @@ fun ZalithCleanLauncherScreen(
     var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
     var showAccountDialog by remember { mutableStateOf(false) }
     var showLogDialog by remember { mutableStateOf(false) }
+    var installStatus by remember { mutableStateOf(HorizonNativeBridge.pollInstallProgress(context)) }
+
+    // Poll official_install progress every 500ms while installing or checking readiness
+    LaunchedEffect(Unit) {
+        while (true) {
+            installStatus = HorizonNativeBridge.pollInstallProgress(context)
+            delay(500L)
+        }
+    }
 
     var accounts by remember {
         mutableStateOf(
@@ -93,9 +104,6 @@ fun ZalithCleanLauncherScreen(
                     username = "Steve",
                     uuid = "8667ba71-b85a-4004-af54-457a9734eed7",
                     accountType = AccountType.OFFLINE,
-                    chromaNameEnabled = false,
-                    slimSkinModel = false,
-                    selectedCapeName = "Horizon Cape",
                     isActive = true
                 ),
                 ZalithAccount(
@@ -103,24 +111,12 @@ fun ZalithCleanLauncherScreen(
                     username = "Alex",
                     uuid = "ec561538-f3fd-461d-aff5-086b22154bce",
                     accountType = AccountType.MICROSOFT,
-                    chromaNameEnabled = true,
-                    slimSkinModel = true,
-                    selectedCapeName = "Migrator",
                     isActive = false
                 )
             )
         )
     }
     val activeAccount = accounts.firstOrNull { it.isActive } ?: accounts.first()
-
-    val assetImporter = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            HorizonNativeBridge.importUriToDestination(context, uri, "", "engine-data.zip")
-            Toast.makeText(context, "Assets imported", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -135,8 +131,9 @@ fun ZalithCleanLauncherScreen(
             )
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1. Minimalist Zalith TopBar (48.dp)
+            // 1. Minimalist Zalith TopBar (46.dp)
             ZalithMinimalTopBar(
+                installStatus = installStatus,
                 onOpenLogs = { showLogDialog = true },
                 onCycleTheme = {
                     val list = ZalithThemePalette.entries
@@ -153,13 +150,11 @@ fun ZalithCleanLauncherScreen(
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Left Icon-Only Navigation Rail (56.dp)
                 ZalithIconRail(
                     selectedTab = selectedTab,
                     onSelectTab = { selectedTab = it }
                 )
 
-                // Center Content Viewport
                 AnimatedContent(
                     targetState = selectedTab,
                     modifier = Modifier
@@ -173,12 +168,24 @@ fun ZalithCleanLauncherScreen(
                     when (tab) {
                         ZalithNavTab.HOME -> CleanHomeViewport(
                             config = config,
+                            installStatus = installStatus,
+                            onStartDownload = {
+                                val started = HorizonNativeBridge.startMinecraft26Download(context)
+                                if (!started) {
+                                    Toast.makeText(context, "Starting installer inside Horizon engine...", Toast.LENGTH_SHORT).show()
+                                    HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                                }
+                            },
                             onNavigate = { selectedTab = it }
                         )
                         ZalithNavTab.VERSIONS -> CleanVersionsViewport(
-                            config = config,
-                            onConfigChange = onConfigChange,
-                            onImportAssets = { assetImporter.launch("*/*") }
+                            installStatus = installStatus,
+                            onStartDownload = {
+                                val started = HorizonNativeBridge.startMinecraft26Download(context)
+                                if (!started) {
+                                    HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                                }
+                            }
                         )
                         ZalithNavTab.FILES -> CleanFilesViewport()
                         ZalithNavTab.SETTINGS -> CleanSettingsViewport(
@@ -194,10 +201,18 @@ fun ZalithCleanLauncherScreen(
                 ZalithLaunchSidebar(
                     activeAccount = activeAccount,
                     config = config,
+                    installStatus = installStatus,
                     onOpenAccountDialog = { showAccountDialog = true },
                     onOpenVersions = { selectedTab = ZalithNavTab.VERSIONS },
-                    onLaunchGame = {
-                        HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                    onLaunchOrDownload = {
+                        if (!installStatus.ready && !installStatus.running) {
+                            val started = HorizonNativeBridge.startMinecraft26Download(context)
+                            if (!started) {
+                                HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                            }
+                        } else if (!installStatus.running) {
+                            HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                        }
                     }
                 )
             }
@@ -210,13 +225,12 @@ fun ZalithCleanLauncherScreen(
             onSelectAccount = { id ->
                 accounts = accounts.map { it.copy(isActive = it.id == id) }
             },
-            onAddAccount = { name, type, chroma ->
+            onAddAccount = { name, type ->
                 val added = ZalithAccount(
                     id = UUID.randomUUID().toString(),
                     username = name,
                     uuid = UUID.randomUUID().toString(),
                     accountType = type,
-                    chromaNameEnabled = chroma,
                     isActive = true
                 )
                 accounts = accounts.map { it.copy(isActive = false) } + added
@@ -257,6 +271,7 @@ fun ZalithCleanLauncherScreen(
 
 @Composable
 private fun ZalithMinimalTopBar(
+    installStatus: AssetInstallStatus,
     onOpenLogs: () -> Unit,
     onCycleTheme: () -> Unit
 ) {
@@ -273,7 +288,10 @@ private fun ZalithMinimalTopBar(
                 modifier = Modifier
                     .size(10.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(
+                        if (installStatus.ready) Color(0xFF66BB6A)
+                        else MaterialTheme.colorScheme.primary
+                    )
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -283,7 +301,7 @@ private fun ZalithMinimalTopBar(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "26.3 Rust",
+                text = if (installStatus.ready) "26.3 Ready" else "26.3 Setup",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -333,7 +351,7 @@ private fun ZalithIconRail(
                 val selected = tab == selectedTab
                 val icon = when (tab) {
                     ZalithNavTab.HOME -> Icons.Default.Home
-                    ZalithNavTab.VERSIONS -> Icons.Default.Layers
+                    ZalithNavTab.VERSIONS -> Icons.Default.Download
                     ZalithNavTab.FILES -> Icons.Default.Folder
                     ZalithNavTab.SETTINGS -> Icons.Default.Settings
                 }
@@ -364,6 +382,8 @@ private fun ZalithIconRail(
 @Composable
 private fun CleanHomeViewport(
     config: HorizonConfigState,
+    installStatus: AssetInstallStatus,
+    onStartDownload: () -> Unit,
     onNavigate: (ZalithNavTab) -> Unit
 ) {
     Surface(
@@ -376,45 +396,59 @@ private fun CleanHomeViewport(
                 .fillMaxSize()
                 .padding(20.dp)
         ) {
-            // Minimal center hero badge
             Column(
                 modifier = Modifier.align(Alignment.CenterStart),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        text = "NATIVE RUST ENGINE",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
                 Text(
                     text = "Minecraft 26.3",
-                    fontSize = 28.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${config.wgpuBackend} • ${config.resolutionScalePercent}% Scale • ${config.renderDistanceChunks} Chunks",
+                    text = "${config.wgpuBackend} • ${config.resolutionScalePercent}% • ${config.renderDistanceChunks} Chunks",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // Clean Download Progress or Ready Status
+                if (installStatus.running) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "${installStatus.stage} (${installStatus.percent}%)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    LinearProgressIndicator(
+                        progress = { installStatus.progressFraction },
+                        modifier = Modifier
+                            .width(260.dp)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(50))
+                    )
+                } else if (!installStatus.ready) {
+                    Spacer(Modifier.height(4.dp))
+                    FilledTonalButton(
+                        onClick = onStartDownload,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Download Game & Assets", fontSize = 12.sp)
+                    }
+                }
             }
 
-            // Bottom quick action chips (clean, 1-word labels)
             Row(
                 modifier = Modifier.align(Alignment.BottomStart),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                QuickGlassPill(Icons.Default.Download, "Assets") { onNavigate(ZalithNavTab.VERSIONS) }
                 QuickGlassPill(Icons.Default.Public, "Worlds") { onNavigate(ZalithNavTab.FILES) }
                 QuickGlassPill(Icons.Default.Extension, "Mods") { onNavigate(ZalithNavTab.FILES) }
-                QuickGlassPill(Icons.Default.Inventory2, "Assets") { onNavigate(ZalithNavTab.VERSIONS) }
-                QuickGlassPill(Icons.Default.Tune, "Config") { onNavigate(ZalithNavTab.SETTINGS) }
+                QuickGlassPill(Icons.Default.Tune, "Settings") { onNavigate(ZalithNavTab.SETTINGS) }
             }
         }
     }
@@ -444,9 +478,8 @@ private fun QuickGlassPill(
 
 @Composable
 private fun CleanVersionsViewport(
-    config: HorizonConfigState,
-    onConfigChange: (HorizonConfigState) -> Unit,
-    onImportAssets: () -> Unit
+    installStatus: AssetInstallStatus,
+    onStartDownload: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -457,57 +490,72 @@ private fun CleanVersionsViewport(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Instances & Assets", style = MaterialTheme.typography.titleMedium)
-                FilledTonalButton(onClick = onImportAssets, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                    Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Import Assets", fontSize = 12.sp)
-                }
-            }
-
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(Icons.Default.SportsEsports, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Column {
-                            Text("Minecraft 26.3 (Horizon Native)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("libhorizon_android.so • Direct Boot", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    RadioButton(selected = true, onClick = {})
-                }
-            }
+            Text("Game & Assets Installer", style = MaterialTheme.typography.titleMedium)
 
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Auto-Prepare Assets on Device", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Switch(
-                        checked = config.publicOnDeviceAssetDownload,
-                        onCheckedChange = { onConfigChange(config.copy(publicOnDeviceAssetDownload = it)) }
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Minecraft: Java Edition 26.3", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                text = if (installStatus.ready) "Installed & Ready"
+                                else if (installStatus.running) "Stage: ${installStatus.stage}"
+                                else "Not Installed (Requires Mojang 26.3 Assets)",
+                                fontSize = 12.sp,
+                                color = if (installStatus.ready) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Button(
+                            onClick = onStartDownload,
+                            enabled = !installStatus.running,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (installStatus.ready) Icons.Default.Refresh else Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (installStatus.running) "${installStatus.percent}%"
+                                else if (installStatus.ready) "Verify"
+                                else "Download 26.3",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    if (installStatus.running) {
+                        LinearProgressIndicator(
+                            progress = { installStatus.progressFraction },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(50))
+                        )
+                    }
+
+                    if (installStatus.error.isNotEmpty()) {
+                        Text(
+                            text = installStatus.error,
+                            fontSize = 11.sp,
+                            color = Color(0xFFFF5252)
+                        )
+                    }
                 }
             }
         }
@@ -577,7 +625,7 @@ private fun CleanFilesViewport() {
 
             if (itemsList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Empty folder", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Empty", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -630,7 +678,6 @@ private fun CleanSettingsViewport(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Row 1: Renderer & Graphics Preset
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -658,7 +705,6 @@ private fun CleanSettingsViewport(
                 }
             }
 
-            // Compact Sliders
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Resolution: ${config.resolutionScalePercent}%", fontSize = 12.sp)
@@ -678,26 +724,6 @@ private fun CleanSettingsViewport(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Distant Terrain: ${config.distantTerrainChunks}", fontSize = 12.sp)
-                    Slider(
-                        value = config.distantTerrainChunks.toFloat(),
-                        onValueChange = { onConfigChange(config.copy(distantTerrainChunks = it.toInt())) },
-                        valueRange = 16f..1024f
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Button Size: ${(config.dpadScale * 100).toInt()}%", fontSize = 12.sp)
-                    Slider(
-                        value = config.dpadScale,
-                        onValueChange = { onConfigChange(config.copy(dpadScale = it)) },
-                        valueRange = 0.5f..1.5f
-                    )
-                }
-            }
-
-            // Clean Toggle Chips
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = config.splitTouchControls,
@@ -728,9 +754,10 @@ private fun CleanSettingsViewport(
 private fun ZalithLaunchSidebar(
     activeAccount: ZalithAccount,
     config: HorizonConfigState,
+    installStatus: AssetInstallStatus,
     onOpenAccountDialog: () -> Unit,
     onOpenVersions: () -> Unit,
-    onLaunchGame: () -> Unit
+    onLaunchOrDownload: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -745,7 +772,6 @@ private fun ZalithLaunchSidebar(
                 .padding(12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top: Account Profile Selector Card
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -789,7 +815,6 @@ private fun ZalithLaunchSidebar(
                 }
             }
 
-            // Bottom: Version Card + Prominent PLAY Button
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -805,7 +830,11 @@ private fun ZalithLaunchSidebar(
                     ) {
                         Column {
                             Text("26.3 Rust", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            Text(config.wgpuBackend, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                            Text(
+                                text = if (installStatus.ready) "Ready" else "Setup Needed",
+                                fontSize = 11.sp,
+                                color = if (installStatus.ready) Color(0xFF66BB6A) else MaterialTheme.colorScheme.secondary
+                            )
                         }
                         Icon(
                             Icons.Default.KeyboardArrowUp,
@@ -816,7 +845,8 @@ private fun ZalithLaunchSidebar(
                 }
 
                 Button(
-                    onClick = onLaunchGame,
+                    onClick = onLaunchOrDownload,
+                    enabled = !installStatus.running,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
@@ -825,10 +855,15 @@ private fun ZalithLaunchSidebar(
                         .fillMaxWidth()
                         .height(52.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(
+                        imageVector = if (installStatus.ready) Icons.Default.PlayArrow else Icons.Default.Download,
+                        contentDescription = null
+                    )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "PLAY",
+                        text = if (installStatus.running) "${installStatus.percent}%"
+                        else if (installStatus.ready) "PLAY"
+                        else "INSTALL",
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp
                     )
@@ -842,7 +877,7 @@ private fun ZalithLaunchSidebar(
 private fun AccountManagerModal(
     accounts: List<ZalithAccount>,
     onSelectAccount: (String) -> Unit,
-    onAddAccount: (String, AccountType, Boolean) -> Unit,
+    onAddAccount: (String, AccountType) -> Unit,
     onDismiss: () -> Unit
 ) {
     var newName by remember { mutableStateOf("") }
@@ -894,7 +929,7 @@ private fun AccountManagerModal(
             Button(
                 onClick = {
                     if (newName.isNotBlank()) {
-                        onAddAccount(newName.trim(), selectedType, false)
+                        onAddAccount(newName.trim(), selectedType)
                         newName = ""
                     }
                     onDismiss()

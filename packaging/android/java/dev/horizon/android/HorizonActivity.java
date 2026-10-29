@@ -11,11 +11,13 @@ import android.view.View;
 import android.view.WindowManager;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 
 /**
- * Native Rust Game Activity from Vasysik/horizon-android.
- * Loads libhorizon_android.so (compiled from crates/horizon-android -> crates/horizon-client/src/android_main.rs)
- * and bridges Storage Access Framework (SAF) request 4101 + ZalithLauncher2Plus runtime environment variables.
+ * NativeActivity for the real Vasysik/horizon-android + horizon-rust/horizon 26.3 engine.
+ * Loads libhorizon_android.so (compiled from crates/horizon-client/src/android_main.rs)
+ * with HORIZON_DIRECT_GAME=1 so it boots straight into game::android_game().
  */
 public final class HorizonActivity extends NativeActivity {
     private static final String TAG = "HorizonActivity";
@@ -29,16 +31,35 @@ public final class HorizonActivity extends NativeActivity {
         }
     }
 
-    /**
-     * Native JNI method bound inside crates/horizon-client/src/android_main.rs.
-     */
     private native void nativeDocumentResult(int request, int result, String uri);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        ensureEngineDataExtracted();
         applyZalithLaunchEnvironment(getIntent());
         enableImmersiveFullscreen();
         super.onCreate(savedInstanceState);
+    }
+
+    private void ensureEngineDataExtracted() {
+        try {
+            File homeDir = getFilesDir();
+            if (homeDir == null) return;
+            if (!homeDir.exists()) homeDir.mkdirs();
+            File engineZip = new File(homeDir, "engine-data.zip");
+            if (!engineZip.exists() || engineZip.length() < 1024) {
+                try (InputStream in = getAssets().open("engine-data.zip");
+                     FileOutputStream out = new FileOutputStream(engineZip)) {
+                    byte[] buf = new byte[65536];
+                    int len;
+                    while ((len = in.read(buf)) > 0) {
+                        out.write(buf, 0, len);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not pre-extract engine-data.zip: " + e.getMessage());
+        }
     }
 
     private void applyZalithLaunchEnvironment(Intent intent) {
@@ -46,10 +67,7 @@ public final class HorizonActivity extends NativeActivity {
             File homeDir = getFilesDir();
             if (homeDir != null) {
                 Os.setenv("HORIZON_HOME", homeDir.getAbsolutePath(), true);
-                File mcDir = new File(homeDir, ".minecraft");
-                if (mcDir.exists()) {
-                    Os.setenv("HORIZON_MINECRAFT_DIR", mcDir.getAbsolutePath(), true);
-                }
+                Os.setenv("HORIZON_DIRECT_GAME", "1", true);
             }
             if (intent != null) {
                 boolean publicMode = intent.getBooleanExtra("HORIZON_ANDROID_PUBLIC", true);
@@ -121,12 +139,5 @@ public final class HorizonActivity extends NativeActivity {
                 Log.e(TAG, "nativeDocumentResult JNI symbol not linked: " + err.getMessage());
             }
         }
-    }
-
-    public void launchSafDocumentPicker(String mimeType) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType(mimeType != null ? mimeType : "*/*");
-        startActivityForResult(intent, SAF_DOCUMENT_REQUEST_CODE);
     }
 }
