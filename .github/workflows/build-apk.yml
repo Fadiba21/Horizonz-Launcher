@@ -83,7 +83,6 @@ jobs:
           mkdir -p .local/android/gradle-assets
           cp -f LICENSE .local/android/gradle-assets/LICENSE.txt || cp -f LICENSE.txt .local/android/gradle-assets/LICENSE.txt || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
-          cp -f packaging/android/bedrock-controls.json .local/android/gradle-assets/ || true
 
           # Extract official engine-data.zip from Vasysik/horizon-android v0.7.3 release into assets
           APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
