@@ -2,10 +2,10 @@
 //!
 //! When built inside the full synced `Vasysik/horizon-android` workspace (`tools/android_build.py`),
 //! `crates/horizon-android/Cargo.toml` points `[lib].path` to `../horizon-client/src/android_main.rs`.
-//! This file provides the complete JNI symbols required by:
+//! This module provides all JNI symbols required by:
 //! - `dev.horizon.android.HorizonActivity` (`nativeDocumentResult`)
 //! - `dev.horizon.android.HorizonDocumentsProvider` (`nativeCall`, `nativeOpen`)
-//! - `dev.horizon.android.bridge.HorizonNativeBridge` (`nativeGetEngineInfo`, `nativePrepareAssets`, `nativeApplyLauncherConfig`)
+//! - `dev.horizon.android.bridge.HorizonNativeBridge` (`nativeGetEngineStatus`)
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString};
@@ -36,7 +36,7 @@ fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
 
 /// JNI callback from `dev.horizon.android.HorizonActivity.nativeDocumentResult(int request, int result, String uri)`
 /// Handles Storage Access Framework (SAF) request code 4101.
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "system" fn Java_dev_horizon_android_HorizonActivity_nativeDocumentResult(
     mut env: JNIEnv,
     _thiz: JObject,
@@ -63,7 +63,7 @@ pub extern "system" fn Java_dev_horizon_android_HorizonActivity_nativeDocumentRe
 
 /// JNI callback from `dev.horizon.android.HorizonDocumentsProvider.nativeCall(String home, String operation, String id, String arg)`
 /// Exposes Horizon worlds, resourcepacks, mods, and logs to the Android Files app (SAF).
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeCall(
     mut env: JNIEnv,
     _class: JClass,
@@ -90,7 +90,7 @@ pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeC
 
 /// JNI callback from `dev.horizon.android.HorizonDocumentsProvider.nativeOpen(String home, String id, String mode)`
 /// Opens a raw UNIX file descriptor for `ParcelFileDescriptor.adoptFd(fd)`.
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeOpen(
     mut env: JNIEnv,
     _class: JClass,
@@ -124,8 +124,8 @@ pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeO
     }
 }
 
-/// Additional helper JNI call for the Material 3 ZalithLauncher frontend (`HorizonNativeBridge`)
-#[unsafe(no_mangle)]
+/// Helper JNI call for the Material 3 ZalithLauncher frontend (`HorizonNativeBridge`)
+#[no_mangle]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeGetEngineStatus(
     mut env: JNIEnv,
     _class: JClass,

@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 """
 HorizonZ-Launcher Android Build Tool (compatible with Vasysik/horizon-android `tools/android_build.py`).
-Supports:
-- Cross-compiling `crates/horizon-android` (`libhorizon_android.so`) across all 4 Android ABIs:
-  - arm64-v8a   -> aarch64-linux-android
-  - armeabi-v7a -> armv7-linux-androideabi
-  - x86_64      -> x86_64-linux-android
-  - x86         -> i686-linux-android
-- `--public` flag (`HORIZON_ANDROID_PUBLIC=1`) for legal public distribution without proprietary Mojang assets
-- Staging `.local/android/gradle-jni/<abi>/libhorizon_android.so` and `.local/android/gradle-assets/`
-- Running Gradle in `packaging/android` to build and sign the Material 3 `HorizonZ-Launcher` APK.
 """
 
 import argparse
 import os
 import shutil
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
 
@@ -49,6 +39,35 @@ def find_ndk(explicit_ndk: str | None) -> Path:
             if versions:
                 return versions[-1]
     raise RuntimeError("Android NDK not found. Pass --ndk or set ANDROID_NDK_HOME.")
+
+
+def ensure_debug_keystore():
+    ks_path = ANDROID_PKG_DIR / "debug.keystore"
+    if not ks_path.exists():
+        subprocess.run(
+            [
+                "keytool",
+                "-genkeypair",
+                "-v",
+                "-keystore",
+                str(ks_path),
+                "-storepass",
+                "android",
+                "-alias",
+                "androiddebugkey",
+                "-keypass",
+                "android",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Android Debug,O=Android,C=US",
+            ],
+            check=True,
+        )
 
 
 def prepare_assets(public_mode: bool):
@@ -111,6 +130,7 @@ def build_rust_for_abi(abi: str, ndk_path: Path, min_sdk: int, profile: str, che
 
 
 def build_gradle_apk(abi: str, min_sdk: int, profile: str):
+    ensure_debug_keystore()
     gradle_cmd = ["gradle", "assembleRelease" if profile == "release" else "assembleDebug"]
     if abi:
         gradle_cmd.append(f"-Pabi={abi}")

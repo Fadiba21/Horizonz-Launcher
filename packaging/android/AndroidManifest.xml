@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.horizon.android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Permissions from Vasysik/horizon-android + ZalithLauncher2Plus (Microphone & Foreground Screen Recorder) -->
     <uses-permission android:name="android.permission.INTERNET" />

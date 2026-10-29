@@ -123,9 +123,6 @@ public final class HorizonActivity extends NativeActivity {
         }
     }
 
-    /**
-     * Helper callable from JNI or Launcher to open the Android SAF document picker (request code 4101).
-     */
     public void launchSafDocumentPicker(String mimeType) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);

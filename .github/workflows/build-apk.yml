@@ -48,14 +48,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK & NDK 28
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Platform 35 & NDK 28.2.13676358
+      - name: Configure Android SDK & Install Platform 35 + NDK 28.2.13676358
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "sdk.dir=$ANDROID_HOME" > packaging/android/local.properties
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n 1)"
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Set up Rust Toolchain (${{ matrix.rust_target }})
         uses: dtolnay/rust-toolchain@stable
@@ -92,22 +99,27 @@ jobs:
             fi
           fi
 
-          # If libhorizon_android.so was not extracted or full_source mode was requested, compile from Rust source
           if [ ! -f ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" ]; then
             python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
           else
             python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --check --ndk "$ANDROID_NDK_HOME"
           fi
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
 
-      - name: Assemble Signed HorizonZ - Launcher APK (${{ matrix.abi }})
+      - name: Generate Signing Keystore & Assemble APK (${{ matrix.abi }})
         working-directory: packaging/android
         run: |
-          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28 --no-daemon --stacktrace
           mkdir -p ../../dist
           find ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" -exec cp {} ../../dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk \;
+          ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4

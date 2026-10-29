@@ -6,9 +6,9 @@ members = [
 
 [workspace.package]
 version = "0.7.4"
-edition = "2024"
+edition = "2021"
 license = "MIT AND GPL-3.0-only"
-repository = "https://github.com/HorizonZ-Launcher/HorizonZ-Launcher"
+repository = "https://github.com/Fadiba21/Horizonz-Launcher"
 
 [profile.dev]
 opt-level = 1

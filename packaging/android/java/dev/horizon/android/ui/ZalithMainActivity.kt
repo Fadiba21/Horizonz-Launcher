@@ -1,6 +1,7 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package dev.horizon.android.ui
 
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -14,13 +15,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -45,10 +44,6 @@ import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
 
-/**
- * Main Material 3 (Material You) Launcher Activity styled after Star1xr/ZalithLauncher2Plus
- * and powered by the Vasysik/horizon-android + horizon-rust/horizon 26.3 native Rust engine.
- */
 class ZalithMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +87,6 @@ fun HorizonZalithAppScreen(
     var isRecording by remember { mutableStateOf(false) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
 
-    // Screen Recorder Elapsed Timer (from ZalithLauncher2Plus 1.3)
     LaunchedEffect(isRecording) {
         while (isRecording) {
             delay(1000L)
@@ -100,7 +94,6 @@ fun HorizonZalithAppScreen(
         }
     }
 
-    // Accounts State (Offline, Microsoft OAuth, Ely.by with Chroma Name & Capes)
     var accounts by remember {
         mutableStateOf(
             listOf(
@@ -129,7 +122,6 @@ fun HorizonZalithAppScreen(
     }
     val activeAccount = accounts.firstOrNull { it.isActive } ?: accounts.first()
 
-    // Capes Collection (ZalithLauncher2Plus 1.3 Cape System)
     var capes by remember {
         mutableStateOf(
             listOf(
@@ -142,7 +134,6 @@ fun HorizonZalithAppScreen(
         )
     }
 
-    // SAF File Importers
     val serverJarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -189,7 +180,6 @@ fun HorizonZalithAppScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 1. Top Bar (ZalithLauncher2Plus 1.2/1.3 layout: Sidebar toggle, Profile Chroma badge, File Manager in TopBar, Recorder, Logs)
         ZalithTopAppBar(
             activeAccount = activeAccount,
             sidebarExpanded = sidebarExpanded,
@@ -215,7 +205,6 @@ fun HorizonZalithAppScreen(
             }
         )
 
-        // 2. Main Body: Left Sidebar Navigation Rail + Center Content + Right Launch Dock
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -227,7 +216,6 @@ fun HorizonZalithAppScreen(
                 onSelectTab = { selectedTab = it }
             )
 
-            // SLICE_IN Transition (ZalithLauncher2Plus 1.3 default transition animation)
             AnimatedContent(
                 targetState = selectedTab,
                 modifier = Modifier
@@ -293,7 +281,6 @@ fun HorizonZalithAppScreen(
                 }
             }
 
-            // Right Quick Launch Dock (ZalithLauncher2Plus signature right panel)
             ZalithRightLaunchDock(
                 config = config,
                 activeAccount = activeAccount,
@@ -388,7 +375,6 @@ private fun ZalithTopAppBar(
                 }
             }
 
-            // Center Active Player Badge (Supports ZL2+ Chroma Name Gradient)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -429,7 +415,6 @@ private fun ZalithTopAppBar(
                 )
             }
 
-            // Right Top Bar Quick Actions (ZL2+ 1.2/1.3: File Manager in top bar, Screen Recorder timer, Logs, Theme)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AssistChip(
                     onClick = onToggleRecorder,
@@ -546,7 +531,6 @@ private fun DashboardScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Hero Banner: Horizon Rust 26.3 + ZalithLauncher2Plus Material 3
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
@@ -574,7 +558,6 @@ private fun DashboardScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                // Main Screen Shortcuts (from ZalithLauncher2Plus README)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -603,7 +586,6 @@ private fun DashboardScreen(
             }
         }
 
-        // Two-column row: Changelog Card + Playtime & Subsystem Parity Card (from ZL2+ 1.2/1.3)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -693,7 +675,6 @@ private fun AccountsWardrobeScreen(
         modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Left Column: Account Manager (Offline, Microsoft 26.3, Ely.by, Chroma Names)
         Card(
             modifier = Modifier
                 .weight(1f)
@@ -783,7 +764,6 @@ private fun AccountsWardrobeScreen(
             }
         }
 
-        // Right Column: ZL2+ 1.3 Cape Selector & Wardrobe
         Card(
             modifier = Modifier
                 .weight(1f)
@@ -877,7 +857,6 @@ private fun VersionAssetsScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Stable / Snapshots Tab Pill (from ZalithLauncher2Plus 1.3 GameVersionFilter)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1166,7 +1145,6 @@ private fun ZalithSettingsScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            // Renderer & Graphics Preset
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1190,7 +1168,6 @@ private fun ZalithSettingsScreen(
                 }
             }
 
-            // Resolution Scale (ZL2+ default 70%)
             Text("Resolution Scale: ${config.resolutionScalePercent}% (ZL2+ Default: 70%)")
             Slider(
                 value = config.resolutionScalePercent.toFloat(),
@@ -1198,7 +1175,6 @@ private fun ZalithSettingsScreen(
                 valueRange = 40f..100f
             )
 
-            // Distant Terrain up to 1024 Chunks (Horizon Rust extra + ZL2+ Distant Horizons support)
             Text("Horizon Distant Terrain: ${config.distantTerrainChunks} Chunks (Up to 1024 Chunks)")
             Slider(
                 value = config.distantTerrainChunks.toFloat(),
@@ -1206,7 +1182,6 @@ private fun ZalithSettingsScreen(
                 valueRange = 16f..1024f
             )
 
-            // Toggles Row
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(

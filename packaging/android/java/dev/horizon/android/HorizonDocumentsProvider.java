@@ -18,8 +18,6 @@ import java.io.FileNotFoundException;
 
 /**
  * Storage Access Framework (SAF) DocumentsProvider from Vasysik/horizon-android.
- * Exposes Horizon worlds, resource packs, data packs, wasm mods, and crash reports
- * to the Android Files app and Zalith In-Launcher File Manager.
  */
 public final class HorizonDocumentsProvider extends DocumentsProvider {
     private static final String TAG = "HorizonDocsProvider";
@@ -57,9 +55,6 @@ public final class HorizonDocumentsProvider extends DocumentsProvider {
         }
     }
 
-    /**
-     * Exact JNI signatures from Vasysik/horizon-android.
-     */
     private static native String nativeCall(String home, String operation, String id, String arg) throws FileNotFoundException;
     private static native int nativeOpen(String home, String id, String mode) throws FileNotFoundException;
 
@@ -102,7 +97,7 @@ public final class HorizonDocumentsProvider extends DocumentsProvider {
                     includeJsonRow(result, obj);
                     return result;
                 }
-            } catch ( Throwable ignored ) {
+            } catch (Throwable ignored) {
             }
         }
         includeFallbackFile(result, docId);

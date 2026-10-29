@@ -43,13 +43,12 @@ data class CapeItem(
 )
 
 data class HorizonConfigState(
-    // Renderer & Display
     val wgpuBackend: String = "Vulkan",
     val graphicsPreset: String = "Fancy",
-    val resolutionScalePercent: Int = 70, // ZL2+ 1.2 default 70%
+    val resolutionScalePercent: Int = 70,
     val renderDistanceChunks: Int = 16,
     val simulationDistanceChunks: Int = 10,
-    val distantTerrainChunks: Int = 256, // Up to 1024 chunks in Horizon
+    val distantTerrainChunks: Int = 256,
     val maxFps: Int = 120,
     val enableVsync: Boolean = true,
     val enableHdr: Boolean = false,
@@ -58,27 +57,21 @@ data class HorizonConfigState(
     val particlesPreset: String = "all",
     val highContrastBlockOutline: Boolean = true,
     val themePalette: ZalithThemePalette = ZalithThemePalette.EMBERMIRE,
-
-    // Touch & Input (Vasysik/horizon-android + ZL2+)
     val splitTouchControls: Boolean = true,
-    val hideControllerWhileLoading: Boolean = true, // ZL2+ 1.2 feature
+    val hideControllerWhileLoading: Boolean = true,
     val autoJump: Boolean = true,
     val toggleSprint: Boolean = true,
     val toggleSneak: Boolean = false,
     val dpadScale: Float = 1.0f,
     val dpadOpacity: Float = 0.78f,
     val hotbarScale: Float = 1.0f,
-
-    // Audio & Screen Recorder (ZL2+ 1.3 + Horizon Audio)
     val masterVolume: Float = 1.0f,
     val musicVolume: Float = 0.5f,
-    val closedCaptions: Boolean = true, // Horizon 0.2.93 fix
-    val disableAudioSafeMode: Boolean = false, // ALSOFT_DISABLE_EVENTS / HORIZON_NO_AUDIO
+    val closedCaptions: Boolean = true,
+    val disableAudioSafeMode: Boolean = false,
     val enableScreenRecorder: Boolean = false,
     val requestMicOnFirstLaunch: Boolean = true,
-
-    // Horizon Extras & Engine
-    val publicOnDeviceAssetDownload: Boolean = true, // --public / HORIZON_ANDROID_PUBLIC=1
+    val publicOnDeviceAssetDownload: Boolean = true,
     val enableZoom: Boolean = true,
     val enableMinimap: Boolean = true,
     val discordRichPresence: Boolean = true,

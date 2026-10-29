@@ -11,6 +11,7 @@ packaging/android/.gradle/
 packaging/android/build/
 packaging/android/app/build/
 local.properties
+packaging/android/local.properties
 *.iml
 .idea/
 *.keystore

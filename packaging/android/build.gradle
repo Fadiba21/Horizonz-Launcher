@@ -6,7 +6,7 @@ plugins {
 
 def targetAbi = project.findProperty('abi') ?: ''
 def customMinSdk = (project.findProperty('minSdk') ?: '28') as int
-def isDevBuild = (project.findProperty('devBuild') ?: 'false').toString().toBoolean()
+def localKeystore = file('debug.keystore')
 
 android {
     namespace 'dev.horizon.android'
@@ -32,7 +32,12 @@ android {
 
     signingConfigs {
         debug {
-            // Uses standard Android debug keystore or CI generated keystore
+            if (localKeystore.exists()) {
+                storeFile localKeystore
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
         }
     }
 
@@ -40,6 +45,7 @@ android {
         debug {
             debuggable true
             jniDebuggable true
+            signingConfig signingConfigs.debug
         }
         release {
             minifyEnabled false
@@ -83,7 +89,7 @@ android {
     }
 }
 
-buildDir = file('../../.local/android/gradle-build')
+layout.buildDirectory.set(file('../../.local/android/gradle-build'))
 
 dependencies {
     def composeBom = platform('androidx.compose:compose-bom:2024.10.01')
