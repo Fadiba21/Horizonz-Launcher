@@ -69,6 +69,8 @@ jobs:
 
           # Patch launcher.rs for direct game boot (game::android_game()) and android_main.rs for JNI official_install hooks
           python3 scripts/patch_horizon_direct_boot.py
+          # Upstream workspace pins Rust in rust-toolchain.toml; install the target after syncing it.
+          rustup target add "${{ matrix.rust_target }}"
 
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
