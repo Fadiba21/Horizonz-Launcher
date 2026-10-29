@@ -27,11 +27,9 @@ def extract_zip_to_root(zip_path: Path, root_dir: Path) -> int:
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(tmp_dir)
 
-        # Check if the zip has a single top-level wrapper folder (e.g. HorizonZ-Launcher/...)
         entries = [p for p in tmp_dir.iterdir() if p.name != "__MACOSX"]
         source_base = tmp_dir
         if len(entries) == 1 and entries[0].is_dir():
-            # Verify it is not one of the standard root subdirectories like 'crates' or 'packaging' alone
             if entries[0].name not in ("crates", "packaging", "scripts", "tools", ".github", "Update"):
                 source_base = entries[0]
                 print(f"[Auto-Update] Detected wrapper folder '{source_base.name}/', unwrapping to root...")
@@ -39,7 +37,6 @@ def extract_zip_to_root(zip_path: Path, root_dir: Path) -> int:
         for item in sorted(source_base.rglob("*")):
             if item.is_file():
                 rel_path = item.relative_to(source_base)
-                # Do not overwrite Update/*.zip while extracting
                 if rel_path.parts[0] == "Update" and rel_path.suffix.lower() == ".zip":
                     continue
                 dest_path = root_dir / rel_path
@@ -55,8 +52,7 @@ def extract_zip_to_root(zip_path: Path, root_dir: Path) -> int:
 def main() -> int:
     if not UPDATE_DIR.exists():
         UPDATE_DIR.mkdir(parents=True, exist_ok=True)
-        (UPDATE_DIR / ".gitkeep").write_text("# Keep Update/ directory tracked in Git.
-", encoding="utf-8")
+        (UPDATE_DIR / ".gitkeep").write_text("# Keep Update/ directory tracked in Git.\n", encoding="utf-8")
         print("[Auto-Update] No Update/ zip files found.")
         return 0
 
@@ -75,16 +71,14 @@ def main() -> int:
         zpath.unlink()
         applied_names.append(zpath.name)
 
-    # Ensure Update/.gitkeep always remains so the Update/ folder never disappears from GitHub UI
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
     gitkeep = UPDATE_DIR / ".gitkeep"
     if not gitkeep.exists():
-        gitkeep.write_text("# Keep Update/ directory tracked in Git.
-", encoding="utf-8")
+        gitkeep.write_text("# Keep Update/ directory tracked in Git.\n", encoding="utf-8")
 
     if applied_names:
         summary_file = ROOT_DIR / ".auto_update_applied.txt"
-        summary_file.write_text(", ".join(applied_names), encoding="utf-8")
+        summary_file.write_text(", ".join(applied_names) + "\n", encoding="utf-8")
         print(f"[Auto-Update] Successfully applied and cleaned up: {', '.join(applied_names)}")
 
     return 0
