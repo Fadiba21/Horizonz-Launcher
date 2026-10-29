@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.2 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.3 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -186,18 +186,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.2-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.3-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.2-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.2-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.3-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.3-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.2 Release APKs
+    name: Publish HorizonZ 1.3 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -217,10 +217,10 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.2 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
+          tag_name: v1.3.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.3 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
           body: |
-            ## HorizonZ - Launcher v1.2
+            ## HorizonZ - Launcher v1.3
             - **Auto-Extract `Update/` Folder System**: Upload any future `HorizonZ*.zip` into the `Update/` folder in the repository; GitHub Actions automatically extracts and overwrites the main repository source code, cleans up the `.zip`, commits to `main`, and builds the new Release APKs.
             - **Fixed `Missing control revision` Error**: Preserves upstream `packaging/android/bedrock-controls.json` during compile time (`include_str!`) and adds fallback control revision handling in `android_resources.rs`.
             - **Live System, Download & Minecraft Runtime Logs**: Expandable/minimizable Download Process Log directly below the progress indicator + full System & Game Log viewer with **Copy** button and **System Logs** toggle in Settings.
