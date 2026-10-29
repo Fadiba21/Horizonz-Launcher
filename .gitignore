@@ -1,7 +1,10 @@
+# Horizon & Rust build artifacts
 /target/
 /.local/
 **/*.rs.bk
 Cargo.lock
+
+# Android & Gradle build artifacts
 .gradle/
 build/
 dist/
@@ -17,6 +20,8 @@ packaging/android/local.properties
 *.apk
 *.aab
 *.idsig
+
+# Never commit proprietary Mojang game assets
 /server.jar
 /client.jar
 /versions/
@@ -24,3 +29,9 @@ packaging/android/local.properties
 /libraries/
 engine-data.zip
 bedrock-controls.zip
+
+# Always allow Update/ folder and any source .zip uploaded into Update/
+!Update/
+!Update/.gitkeep
+!Update/README.md
+!Update/*.zip

@@ -12,8 +12,48 @@ permissions:
   contents: write
 
 jobs:
+  apply-update-zip:
+    name: Auto-Extract Update/ ZIP to Main Source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check & Extract Any ZIP in Update/ Folder Over Main Source
+        run: |
+          python3 scripts/apply_update_zip.py
+          if [ -f ".auto_update_applied.txt" ]; then
+            APPLIED_ZIPS="$(cat .auto_update_applied.txt)"
+            rm -f .auto_update_applied.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(auto-update): extract ${APPLIED_ZIPS} from Update/ into main source"
+              # Try pushing all changes (including workflows if permitted); if GITHUB_TOKEN restricts .github/workflows,
+              # keep all source changes outside .github/workflows and push cleanly to main!
+              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+                echo "Note: GITHUB_TOKEN cannot modify .github/workflows/ directly; committing all source files outside .github/workflows/..."
+                git reset --soft HEAD~1
+                git checkout HEAD -- .github/workflows/ || true
+                git add -A
+                if ! git diff --cached --quiet; then
+                  git commit -m "chore(auto-update): extract ${APPLIED_ZIPS} from Update/ into main source"
+                  git push origin "HEAD:${GITHUB_REF_NAME}"
+                fi
+              fi
+              echo "### Auto-Update Applied" >> "$GITHUB_STEP_SUMMARY"
+              echo "Extracted **${APPLIED_ZIPS}** from \`Update/\` and overwrote main repository source code." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
   build-horizonz-apk:
-    name: Build HorizonZ Real Engine APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.2 APK (${{ matrix.abi }})
+    needs: apply-update-zip
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -28,8 +68,15 @@ jobs:
             clang_prefix: armv7a-linux-androideabi28
 
     steps:
-      - name: Checkout HorizonZ - Launcher
+      - name: Checkout Latest Main Source (After Any Update/ ZIP Extraction)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Ensure Any Remaining Update/ ZIP is Applied in Build Workspace
+        run: |
+          python3 scripts/apply_update_zip.py
+          rm -f .auto_update_applied.txt
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -62,20 +109,19 @@ jobs:
         run: |
           rm -rf /tmp/horizon-upstream
           git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
-          # Copy the real Rust workspace crates, third_party, mods, Cargo.toml, Cargo.lock, research-lock.json
-          # while preserving HorizonZ's packaging/android UI and scripts
           rsync -a --exclude='packaging/android' --exclude='.git' --exclude='.github' /tmp/horizon-upstream/ ./
+          if [ -f "/tmp/horizon-upstream/packaging/android/bedrock-controls.json" ]; then
+            cp -f "/tmp/horizon-upstream/packaging/android/bedrock-controls.json" packaging/android/bedrock-controls.json
+          fi
           rm -rf /tmp/horizon-upstream
+          rm -f packaging/android/assets/bedrock-controls.json
 
-          # Patch launcher.rs for direct game boot (game::android_game()) and android_main.rs for JNI official_install hooks
           python3 scripts/patch_horizon_direct_boot.py
-          # Upstream workspace pins Rust in rust-toolchain.toml; install the target after syncing it.
-          rustup target add "${{ matrix.rust_target }}"
 
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-${{ matrix.rust_target }}
+          key: horizon-real-engine-v12-${{ matrix.rust_target }}
 
       - name: Compile Real Horizon Rust Engine (libhorizon_android.so) & Stage Assets (${{ matrix.abi }})
         run: |
@@ -84,7 +130,6 @@ jobs:
           cp -f LICENSE .local/android/gradle-assets/LICENSE.txt || cp -f LICENSE.txt .local/android/gradle-assets/LICENSE.txt || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
 
-          # Extract official engine-data.zip from Vasysik/horizon-android v0.7.3 release into assets
           APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
           if curl -fsSL -L "$APK_URL" -o /tmp/upstream_assets.apk; then
             unzip -q -o /tmp/upstream_assets.apk "assets/*" -d /tmp/upstream_assets_dir || true
@@ -136,18 +181,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-0.9.0-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.2-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-0.9.0-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-0.9.0-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.2-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.2-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ - Launcher Release APKs
+    name: Publish HorizonZ 1.2 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -167,13 +212,13 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v0.9.0 (Build #${{ github.run_number }} • Real Horizon 26.3 Engine + Asset Installer + Clean Zalith UI)"
+          tag_name: v1.2.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.2 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
           body: |
-            ## HorizonZ - Launcher v0.9.0 (Real Minecraft 26.3 Rust Engine + Built-in Asset Downloader + Clean Zalith UI)
-            - **Real `Vasysik/horizon-android` + `horizon-rust/horizon` Engine Compiled from Source**: Clones the full `Vasysik/horizon-android` Rust workspace (`crates/horizon-client`, `crates/horizon-world`, `crates/horizon-assets`, `crates/horizon-protocol`, `wgpu`) and compiles `libhorizon_android.so` natively.
-            - **Built-in Official Minecraft 26.3 Game & Asset Downloader (`official_install`)**: Download and prepare the full Minecraft 26.3 client, server, textures, sounds, and worldgen data directly from the Zalith Material 3 Android UI via JNI (`nativeStartOfficialInstall`, `nativeGetInstallProgress`).
-            - **Direct Boot into `game::android_game()`**: Patched `crates/horizon-client/src/android/launcher.rs` so clicking **PLAY** skips Vasysik's built-in Rust launcher menu and boots straight into the real Minecraft 26.3 Rust game.
+            ## HorizonZ - Launcher v1.2
+            - **Auto-Extract `Update/` Folder System**: Upload any future `HorizonZ*.zip` into the `Update/` folder in the repository; GitHub Actions automatically extracts and overwrites the main repository source code, cleans up the `.zip`, commits to `main`, and builds the new Release APKs.
+            - **Fixed `Missing control revision` Error**: Preserves upstream `packaging/android/bedrock-controls.json` during compile time (`include_str!`) and adds fallback control revision handling in `android_resources.rs`.
+            - **Live System, Download & Minecraft Runtime Logs**: Expandable/minimizable Download Process Log directly below the progress indicator + full System & Game Log viewer with **Copy** button and **System Logs** toggle in Settings.
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt
