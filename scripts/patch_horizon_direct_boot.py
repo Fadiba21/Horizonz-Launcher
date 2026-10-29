@@ -35,6 +35,7 @@ if launcher_rs.exists():
                 if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
                     let _ = self.action(events);
                 }
+                Ok(())
             }"""
     if old_redraw in txt:
         txt = txt.replace(old_redraw, new_redraw, 1)
