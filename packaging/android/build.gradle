@@ -1,0 +1,104 @@
+plugins {
+    id 'com.android.application' version '8.7.3'
+    id 'org.jetbrains.kotlin.android' version '2.0.21'
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21'
+}
+
+def targetAbi = project.findProperty('abi') ?: ''
+def customMinSdk = (project.findProperty('minSdk') ?: '28') as int
+def isDevBuild = (project.findProperty('devBuild') ?: 'false').toString().toBoolean()
+
+android {
+    namespace 'dev.horizon.android'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'dev.horizon.android'
+        minSdk customMinSdk
+        targetSdk 35
+        versionCode 25
+        versionName '0.7.4-ZL2Plus'
+
+        if (targetAbi != '') {
+            ndk {
+                abiFilters targetAbi
+            }
+        } else {
+            ndk {
+                abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+            }
+        }
+    }
+
+    signingConfigs {
+        debug {
+            // Uses standard Android debug keystore or CI generated keystore
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ['java']
+            res.srcDirs = ['res']
+            jniLibs.srcDirs = ['../../.local/android/gradle-jni', 'jniLibs']
+            assets.srcDirs = ['../../.local/android/gradle-assets', 'assets']
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/*.so']
+        }
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+    }
+}
+
+buildDir = file('../../.local/android/gradle-build')
+
+dependencies {
+    def composeBom = platform('androidx.compose:compose-bom:2024.10.01')
+    implementation composeBom
+
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+
+    // Material Design 3 (Material You) & Icons matching ZalithLauncher2Plus
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+}

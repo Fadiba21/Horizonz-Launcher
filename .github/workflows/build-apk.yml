@@ -1,0 +1,150 @@
+name: Build HorizonZ Launcher APK
+
+on:
+  push:
+    branches: [ "main", "master", "android" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master", "android" ]
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Engine build mode: 'hybrid' (extracts verified v0.7.3 libhorizon_android.so + compiles Rust JNI bridge & Material 3 APK fast) or 'full_source' (clones & compiles full Vasysik/horizon-android Rust workspace from source)"
+        required: false
+        default: "hybrid"
+        type: choice
+        options:
+          - hybrid
+          - full_source
+
+permissions:
+  contents: write
+
+jobs:
+  build-horizonz-apk:
+    name: Build HorizonZ - Launcher APK (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            rust_target: aarch64-linux-android
+          - abi: armeabi-v7a
+            rust_target: armv7-linux-androideabi
+          - abi: x86_64
+            rust_target: x86_64-linux-android
+          - abi: x86
+            rust_target: i686-linux-android
+
+    steps:
+      - name: Checkout HorizonZ - Launcher
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK & NDK 28
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Platform 35 & NDK 28.2.13676358
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+
+      - name: Set up Rust Toolchain (${{ matrix.rust_target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Sync Upstream Vasysik/horizon-android (if full_source mode selected)
+        if: ${{ github.event.inputs.build_mode == 'full_source' }}
+        run: |
+          chmod +x scripts/sync_upstream.sh
+          ./scripts/sync_upstream.sh
+
+      - name: Prepare Native Engine Libraries & Assets (${{ matrix.abi }})
+        run: |
+          mkdir -p .local/android/gradle-jni/${{ matrix.abi }}
+          mkdir -p .local/android/gradle-assets
+          cp -f LICENSE.txt .local/android/gradle-assets/ || true
+          cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
+          cp -f packaging/android/bedrock-controls.json .local/android/gradle-assets/ || true
+
+          if [ "${{ github.event.inputs.build_mode }}" != "full_source" ]; then
+            echo "Fetching official Vasysik/horizon-android v0.7.3 release APK for ${{ matrix.abi }} to extract prebuilt engine-data.zip & libhorizon_android.so..."
+            APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
+            if curl -fsSL -L "$APK_URL" -o /tmp/upstream.apk; then
+              unzip -q -o /tmp/upstream.apk "lib/${{ matrix.abi }}/libhorizon_android.so" -d /tmp/upstream_extracted || true
+              unzip -q -o /tmp/upstream.apk "assets/*" -d /tmp/upstream_extracted || true
+              if [ -f "/tmp/upstream_extracted/lib/${{ matrix.abi }}/libhorizon_android.so" ]; then
+                cp -f "/tmp/upstream_extracted/lib/${{ matrix.abi }}/libhorizon_android.so" ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
+              fi
+              if [ -d "/tmp/upstream_extracted/assets" ]; then
+                cp -rf /tmp/upstream_extracted/assets/* .local/android/gradle-assets/ || true
+              fi
+              rm -rf /tmp/upstream.apk /tmp/upstream_extracted
+            fi
+          fi
+
+          # If libhorizon_android.so was not extracted or full_source mode was requested, compile from Rust source
+          if [ ! -f ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" ]; then
+            python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --rust-only --ndk "$ANDROID_NDK_HOME"
+          else
+            python3 tools/android_build.py --public --abi ${{ matrix.abi }} --profile release --check --ndk "$ANDROID_NDK_HOME"
+          fi
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble Signed HorizonZ - Launcher APK (${{ matrix.abi }})
+        working-directory: packaging/android
+        run: |
+          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28
+          mkdir -p ../../dist
+          find ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" -exec cp {} ../../dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk \;
+
+      - name: Upload APK Artifact (${{ matrix.abi }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: HorizonZ-Launcher-0.7.4-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-0.7.4-${{ matrix.abi }}.apk
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish HorizonZ - Launcher Release APKs
+    needs: build-horizonz-apk
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download All Built APK Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-apks
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: release-apks
+        run: |
+          sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
+
+      - name: Create or Update Latest GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.7.4-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v0.7.4 (Build #${{ github.run_number }} • Rust 26.3 + Zalith M3 UI)"
+          body: |
+            ## HorizonZ - Launcher (Minecraft: Java Edition 26.3 in 100% Rust for Android)
+            - **Upstream Engine**: [horizon-rust/horizon](https://github.com/horizon-rust/horizon) (`v0.2.97` • Minecraft 26.3 in Rust)
+            - **Android Native Backend**: [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android) (`v0.7.3` / `0.7.4` • `libhorizon_android.so`, `HorizonActivity`, `HorizonDocumentsProvider`, Touch & Gamepad HUD)
+            - **Material 3 Frontend**: Styled after [Star1xr/ZalithLauncher2Plus](https://github.com/Star1xr/ZalithLauncher2Plus) (`2.4.10 Plus 1.3` • Jetpack Compose Material You, Cape Wardrobe, Chroma Names, Distant Terrain up to 1024 chunks, In-Launcher File Manager, Screen Recorder)
+          files: |
+            release-apks/*.apk
+            release-apks/SHA256SUMS.txt
+          prerelease: false

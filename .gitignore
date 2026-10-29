@@ -1,0 +1,29 @@
+# Horizon & Rust build artifacts
+/target/
+/.local/
+**/*.rs.bk
+Cargo.lock
+
+# Android & Gradle build artifacts
+.gradle/
+build/
+packaging/android/.gradle/
+packaging/android/build/
+packaging/android/app/build/
+local.properties
+*.iml
+.idea/
+*.keystore
+*.jks
+*.apk
+*.aab
+*.idsig
+
+# Never commit proprietary Mojang game assets or prepared resources
+/server.jar
+/client.jar
+/versions/
+/assets/
+/libraries/
+engine-data.zip
+bedrock-controls.zip
