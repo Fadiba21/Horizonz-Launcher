@@ -41,7 +41,7 @@ fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
 #[cfg(target_os = "android")]
 mod native_runtime {
     use super::*;
-    use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvents};
+    use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
     use std::ffi::c_void;
 
     type EGLDisplay = *mut c_void;
@@ -355,19 +355,19 @@ mod native_runtime {
 
         while running {
             app.poll_events(Some(Duration::from_millis(16)), |event| match event {
-                PollEvents::Main(MainEvent::InitWindow { .. }) => {
+                PollEvent::Main(MainEvent::InitWindow { .. }) => {
                     if let Some(window) = app.native_window() {
                         unsafe {
                             egl = EglState::new(window.ptr().as_ptr() as *mut c_void);
                         }
                     }
                 }
-                PollEvents::Main(MainEvent::TerminateWindow { .. }) => {
+                PollEvent::Main(MainEvent::TerminateWindow { .. }) => {
                     if let Some(mut state) = egl.take() {
                         unsafe { state.destroy() };
                     }
                 }
-                PollEvents::Main(MainEvent::Destroy) => {
+                PollEvent::Main(MainEvent::Destroy) => {
                     running = false;
                 }
                 _ => {}
