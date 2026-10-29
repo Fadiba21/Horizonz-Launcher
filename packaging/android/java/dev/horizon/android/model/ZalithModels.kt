@@ -12,6 +12,30 @@ enum class AccountType(val badge: String) {
     MICROSOFT("Microsoft")
 }
 
+enum class HorizonRendererMode(val serdeKey: String, val label: String) {
+    VULKAN_COMPAT("vulkan-compatibility", "Vulkan Compat"),
+    VULKAN("vulkan", "Vulkan"),
+    OPENGL("opengl", "OpenGL ES")
+}
+
+enum class HorizonInputHost(val serdeKey: String, val label: String) {
+    AUTO("auto", "Auto"),
+    TOUCH("touch", "Touch"),
+    KEYBOARD_MOUSE("keyboard-mouse", "Keyboard/Mouse"),
+    CONTROLLER("controller", "Controller")
+}
+
+enum class HorizonOrientation(val serdeKey: String, val label: String) {
+    LANDSCAPE("landscape", "Landscape"),
+    REVERSE_LANDSCAPE("reverse-landscape", "Flipped"),
+    AUTO("auto", "Auto")
+}
+
+enum class HorizonContentOrigin(val serdeKey: String, val label: String) {
+    HORIZON("horizon", "Horizon"),
+    MODRINTH("modrinth", "Modrinth")
+}
+
 enum class ZalithThemePalette(val label: String, val primaryHex: Long, val secondaryHex: Long, val surfaceHex: Long) {
     MATERIAL_YOU("Material You (System)", 0xFF64B5F6, 0xFF81C784, 0xFF10131A),
     EMBERMIRE("Embermire", 0xFFFF7043, 0xFFFFB74D, 0xFF12151E),
@@ -27,40 +51,27 @@ data class ZalithAccount(
     val isActive: Boolean = false
 )
 
+/**
+ * Aligned directly with `crates/horizon-client/src/android/catalog.rs` (`android-launcher.json`).
+ */
 data class HorizonConfigState(
-    val wgpuBackend: String = "Vulkan",
-    val graphicsPreset: String = "Fancy",
-    val resolutionScalePercent: Int = 75,
-    val renderDistanceChunks: Int = 16,
-    val simulationDistanceChunks: Int = 10,
-    val distantTerrainChunks: Int = 128,
-    val maxFps: Int = 120,
-    val enableVsync: Boolean = true,
-    val enableHdr: Boolean = false,
-    val fov: Float = 90f,
-    val guiScale: Int = 3,
-    val particlesPreset: String = "all",
-    val highContrastBlockOutline: Boolean = true,
+    val profile: Int = 0,
+    val renderer: HorizonRendererMode = HorizonRendererMode.VULKAN_COMPAT,
+    val renderScalePercent: Int = 75,
+    val orientation: HorizonOrientation = HorizonOrientation.LANDSCAPE,
+    val inputHost: HorizonInputHost = HorizonInputHost.AUTO,
+    val keypadControls: Boolean = false,
+    val recordPerformance: Boolean = false,
+    val modSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,
+    val shaderSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,
+    val defaultServer: String = "",
+    val proxy: String = "",
     val themePalette: ZalithThemePalette = ZalithThemePalette.MATERIAL_YOU,
-    val useDynamicColor: Boolean = true, // Default Material 3 (You) Android
-    val enableSystemLog: Boolean = true, // Lightweight System & Game Log toggle
-    val splitTouchControls: Boolean = true,
-    val hideControllerWhileLoading: Boolean = true,
-    val autoJump: Boolean = true,
-    val toggleSprint: Boolean = true,
-    val toggleSneak: Boolean = false,
-    val dpadScale: Float = 1.0f,
-    val dpadOpacity: Float = 0.78f,
-    val hotbarScale: Float = 1.0f,
-    val masterVolume: Float = 1.0f,
-    val musicVolume: Float = 0.5f,
-    val closedCaptions: Boolean = true,
+    val useDynamicColor: Boolean = true,
+    val enableSystemLog: Boolean = true,
     val disableAudioSafeMode: Boolean = false,
-    val publicOnDeviceAssetDownload: Boolean = true,
-    val enableZoom: Boolean = true,
-    val enableMinimap: Boolean = true,
     val discordRichPresence: Boolean = true,
-    val integratedServerThread: Boolean = true
+    val publicOnDeviceAssetDownload: Boolean = true
 )
 
 val MINECRAFT_SPLASH_QUOTES = listOf(
@@ -69,7 +80,7 @@ val MINECRAFT_SPLASH_QUOTES = listOf(
     "Creeper? Aww man...",
     "100% Native Rust — Zero JVM lag!",
     "Watch out for Wardens in the Deep Dark.",
-    "Always carry a water bucket in the Nether... wait, don't!",
+    "Always carry a water bucket in the Overworld!",
     "Diamonds are best found deep in Deepslate.",
     "Redstone engineers build computers inside blocks.",
     "Don't look an Enderman in the eyes!",

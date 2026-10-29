@@ -9,8 +9,7 @@ import android.os.Process
 import android.util.Log
 import android.widget.Toast
 import dev.horizon.android.HorizonActivity
-import dev.horizon.android.model.HorizonConfigState
-import dev.horizon.android.model.ZalithAccount
+import dev.horizon.android.model.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -20,6 +19,7 @@ import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedDeque
 
 data class AssetInstallStatus(
@@ -49,9 +49,9 @@ object HorizonNativeBridge {
         try {
             System.loadLibrary("horizon_android")
             nativeLoaded = true
-            appendSystemLog("Native library libhorizon_android.so loaded successfully.")
+            appendSystemLog("Native library libhorizon_android.so loaded.")
         } catch (e: UnsatisfiedLinkError) {
-            appendSystemLog("Native library will load on game start: ${e.message}")
+            appendSystemLog("Native library will load in :game process: ${e.message}")
         }
     }
 
@@ -98,15 +98,13 @@ object HorizonNativeBridge {
             "datapacks",
             "shaderpacks",
             "mods",
-            "capes",
-            "skins",
+            "profiles",
             "logs",
             ".local/horizon-client/26.3"
         ).forEach { sub ->
             File(home, sub).mkdirs()
         }
 
-        // Always ensure engine-data.zip is extracted from APK assets to filesDir/engine-data.zip
         val engineZip = File(home, "engine-data.zip")
         if (!engineZip.exists() || engineZip.length() < 1024L) {
             try {
@@ -115,12 +113,196 @@ object HorizonNativeBridge {
                         input.copyTo(output)
                     }
                 }
-                appendSystemLog("Extracted bundled engine-data.zip (${engineZip.length() / 1024} KB) to home.")
+                appendSystemLog("Extracted bundled engine-data.zip (${engineZip.length() / 1024} KB).")
             } catch (e: Exception) {
-                appendSystemLog("Note: engine-data.zip asset check: ${e.message}")
+                appendSystemLog("Note: engine-data.zip check: ${e.message}")
             }
         }
         return home
+    }
+
+    // ========================================================================
+    // PERSISTENT ACCOUNTS SYSTEM (Never resets across app/game restarts!)
+    // ========================================================================
+
+    fun loadSavedAccounts(context: Context): List<ZalithAccount> {
+        val home = ensureHomeDirectories(context)
+        val file = File(home, "zalith-accounts.json")
+        if (file.exists()) {
+            try {
+                val arr = JSONArray(file.readText())
+                val list = mutableListOf<ZalithAccount>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val typeName = obj.optString("accountType", AccountType.OFFLINE.name)
+                    val type = runCatching { AccountType.valueOf(typeName) }.getOrDefault(AccountType.OFFLINE)
+                    list.add(
+                        ZalithAccount(
+                            id = obj.optString("id", UUID.randomUUID().toString()),
+                            username = obj.optString("username", "Player"),
+                            uuid = obj.optString("uuid", UUID.randomUUID().toString()),
+                            accountType = type,
+                            isActive = obj.optBoolean("isActive", false)
+                        )
+                    )
+                }
+                if (list.isNotEmpty()) {
+                    if (list.none { it.isActive }) {
+                        return list.mapIndexed { idx, acc -> acc.copy(isActive = idx == 0) }
+                    }
+                    return list
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read zalith-accounts.json: ${e.message}")
+            }
+        }
+        val defaultList = listOf(
+            ZalithAccount(
+                id = "default_1",
+                username = "Steve",
+                uuid = "8667ba71-b85a-4004-af54-457a9734eed7",
+                accountType = AccountType.OFFLINE,
+                isActive = true
+            )
+        )
+        saveAccounts(context, defaultList, loadSavedConfig(context))
+        return defaultList
+    }
+
+    fun saveAccounts(context: Context, accounts: List<ZalithAccount>, config: HorizonConfigState) {
+        val home = ensureHomeDirectories(context)
+        val arr = JSONArray()
+        accounts.forEach { acc ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", acc.id)
+                    put("username", acc.username)
+                    put("uuid", acc.uuid)
+                    put("accountType", acc.accountType.name)
+                    put("isActive", acc.isActive)
+                }
+            )
+        }
+        File(home, "zalith-accounts.json").writeText(arr.toString(2))
+
+        val active = accounts.firstOrNull { it.isActive } ?: accounts.firstOrNull() ?: return
+        syncNativeHorizonAccountAndCatalog(home, active, config)
+    }
+
+    // ========================================================================
+    // PERSISTENT SETTINGS SYSTEM (Aligned with catalog.rs & Non-Destructive to options.txt!)
+    // ========================================================================
+
+    fun loadSavedConfig(context: Context): HorizonConfigState {
+        val home = ensureHomeDirectories(context)
+        val file = File(home, "zalith-config.json")
+        if (file.exists()) {
+            try {
+                val obj = JSONObject(file.readText())
+                val rendererKey = obj.optString("renderer", HorizonRendererMode.VULKAN_COMPAT.serdeKey)
+                val renderer = HorizonRendererMode.entries.firstOrNull { it.serdeKey == rendererKey }
+                    ?: HorizonRendererMode.VULKAN_COMPAT
+                val orientKey = obj.optString("orientation", HorizonOrientation.LANDSCAPE.serdeKey)
+                val orientation = HorizonOrientation.entries.firstOrNull { it.serdeKey == orientKey }
+                    ?: HorizonOrientation.LANDSCAPE
+                val inputKey = obj.optString("input_host", HorizonInputHost.AUTO.serdeKey)
+                val inputHost = HorizonInputHost.entries.firstOrNull { it.serdeKey == inputKey }
+                    ?: HorizonInputHost.AUTO
+                val modSrcKey = obj.optString("mod_source", HorizonContentOrigin.HORIZON.serdeKey)
+                val modSource = HorizonContentOrigin.entries.firstOrNull { it.serdeKey == modSrcKey }
+                    ?: HorizonContentOrigin.HORIZON
+                val shaderSrcKey = obj.optString("shader_source", HorizonContentOrigin.HORIZON.serdeKey)
+                val shaderSource = HorizonContentOrigin.entries.firstOrNull { it.serdeKey == shaderSrcKey }
+                    ?: HorizonContentOrigin.HORIZON
+
+                return HorizonConfigState(
+                    profile = obj.optInt("profile", 0),
+                    renderer = renderer,
+                    renderScalePercent = obj.optInt("render_scale", 75).coerceIn(25, 100),
+                    orientation = orientation,
+                    inputHost = inputHost,
+                    keypadControls = obj.optBoolean("keypad_controls", false),
+                    recordPerformance = obj.optBoolean("record_performance", false),
+                    modSource = modSource,
+                    shaderSource = shaderSource,
+                    defaultServer = obj.optString("server", ""),
+                    proxy = obj.optString("proxy", ""),
+                    useDynamicColor = obj.optBoolean("useDynamicColor", true),
+                    enableSystemLog = obj.optBoolean("enableSystemLog", true),
+                    disableAudioSafeMode = obj.optBoolean("disableAudioSafeMode", false),
+                    discordRichPresence = obj.optBoolean("discordRichPresence", true)
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read zalith-config.json: ${e.message}")
+            }
+        }
+        return HorizonConfigState()
+    }
+
+    fun saveConfig(context: Context, config: HorizonConfigState, activeAccount: ZalithAccount) {
+        val home = ensureHomeDirectories(context)
+        val zalithObj = JSONObject().apply {
+            put("profile", config.profile)
+            put("renderer", config.renderer.serdeKey)
+            put("render_scale", config.renderScalePercent)
+            put("orientation", config.orientation.serdeKey)
+            put("input_host", config.inputHost.serdeKey)
+            put("keypad_controls", config.keypadControls)
+            put("record_performance", config.recordPerformance)
+            put("mod_source", config.modSource.serdeKey)
+            put("shader_source", config.shaderSource.serdeKey)
+            put("server", config.defaultServer)
+            put("proxy", config.proxy)
+            put("useDynamicColor", config.useDynamicColor)
+            put("enableSystemLog", config.enableSystemLog)
+            put("disableAudioSafeMode", config.disableAudioSafeMode)
+            put("discordRichPresence", config.discordRichPresence)
+        }
+        File(home, "zalith-config.json").writeText(zalithObj.toString(2))
+        syncNativeHorizonAccountAndCatalog(home, activeAccount, config)
+    }
+
+    /**
+     * Writes the exact `android-launcher.json` (used by `crates/horizon-client/src/android/catalog.rs`)
+     * and `accounts.json` / `horizon-player.txt` (used by `launcher/src/account.rs`) WITHOUT touching
+     * existing in-game `options.txt`!
+     */
+    private fun syncNativeHorizonAccountAndCatalog(
+        home: File,
+        activeAccount: ZalithAccount,
+        config: HorizonConfigState
+    ) {
+        // 1. Write `android-launcher.json` matching `crates/horizon-client/src/android/catalog.rs`
+        val androidLauncherJson = JSONObject().apply {
+            put("profile", config.profile)
+            if (config.proxy.isNotBlank()) put("proxy", config.proxy.trim()) else put("proxy", JSONObject.NULL)
+            put("name", activeAccount.username)
+            put("server", config.defaultServer.trim())
+            put("renderer", config.renderer.serdeKey)
+            put("render_scale", config.renderScalePercent)
+            put("orientation", config.orientation.serdeKey)
+            put("input_host", config.inputHost.serdeKey)
+            put("keypad_controls", config.keypadControls)
+            put("record_performance", config.recordPerformance)
+            put("shader_source", config.shaderSource.serdeKey)
+            put("mod_source", config.modSource.serdeKey)
+        }
+        File(home, "android-launcher.json").writeText(androidLauncherJson.toString(2))
+
+        // 2. Write `accounts.json` and `horizon-player.txt` in both `home` and `profile_home`
+        val profileHome = if (config.profile == 0) home else File(home, "profiles/profile-${config.profile}")
+        profileHome.mkdirs()
+
+        val accountsJson = JSONObject().apply {
+            put("accounts", JSONArray())
+            put("selected", JSONObject.NULL)
+            put("offline", JSONArray().apply { put(activeAccount.username) })
+            put("offline_selected", activeAccount.username)
+        }
+        listOf(home, profileHome).forEach { dir ->
+            File(dir, "accounts.json").writeText(accountsJson.toString(2))
+            File(dir, "horizon-player.txt").writeText(activeAccount.username)
+        }
     }
 
     fun isMinecraft26Ready(context: Context): Boolean {
@@ -221,59 +403,6 @@ object HorizonNativeBridge {
         }
     }
 
-    fun writeEngineConfigs(
-        context: Context,
-        config: HorizonConfigState,
-        activeAccount: ZalithAccount
-    ) {
-        val home = ensureHomeDirectories(context)
-        appendSystemLog(
-            "Writing engine config (Player=${activeAccount.username}, Backend=${config.wgpuBackend}, Scale=${config.resolutionScalePercent}%)",
-            config.enableSystemLog
-        )
-
-        val optionsTxt = buildString {
-            appendLine("version:4325")
-            appendLine("fov:${(config.fov - 70f) / 40f}")
-            appendLine("renderDistance:${config.renderDistanceChunks.coerceAtMost(32)}")
-            appendLine("simulationDistance:${config.simulationDistanceChunks}")
-            appendLine("guiScale:${config.guiScale}")
-            appendLine("particles:${config.particlesPreset}")
-            appendLine("maxFps:${config.maxFps}")
-            appendLine("enableVsync:${config.enableVsync}")
-            appendLine("autoJump:${config.autoJump}")
-            appendLine("toggleSprint:${config.toggleSprint}")
-            appendLine("toggleCrouch:${config.toggleSneak}")
-            appendLine("soundCategory_master:${config.masterVolume}")
-            appendLine("soundCategory_music:${config.musicVolume}")
-            appendLine("showSubtitles:${config.closedCaptions}")
-            appendLine("highContrastBlockOutline:${config.highContrastBlockOutline}")
-            appendLine("fullscreen:true")
-        }
-        File(home, "options.txt").writeText(optionsTxt)
-
-        val horizonExtras = buildString {
-            appendLine("# Generated by HorizonZ Launcher 1.1")
-            appendLine("graphicsPreset=${config.graphicsPreset.lowercase()}")
-            appendLine("distantTerrainChunks=${config.distantTerrainChunks}")
-            appendLine("resolutionScale=${config.resolutionScalePercent / 100.0f}")
-            appendLine("wgpuBackend=${config.wgpuBackend.lowercase()}")
-            appendLine("enableHdr=${config.enableHdr}")
-            appendLine("keepAnimatedTextures=true")
-            appendLine("enableZoom=${config.enableZoom}")
-            appendLine("enableMinimap=${config.enableMinimap}")
-            appendLine("discordPresence=${config.discordRichPresence}")
-            appendLine("integratedServerThread=${config.integratedServerThread}")
-            appendLine("hideControllerWhileLoading=${config.hideControllerWhileLoading}")
-            appendLine("touchSplitControls=${config.splitTouchControls}")
-            appendLine("touchDpadScale=${config.dpadScale}")
-            appendLine("touchDpadOpacity=${config.dpadOpacity}")
-            appendLine("playerName=${activeAccount.username}")
-            appendLine("accountType=${activeAccount.accountType.name.lowercase()}")
-        }
-        File(home, "horizon-extras.txt").writeText(horizonExtras)
-    }
-
     fun importUriToDestination(context: Context, uri: Uri, subFolder: String, targetFileName: String, logEnabled: Boolean = true): Boolean {
         return try {
             val home = ensureHomeDirectories(context)
@@ -293,29 +422,24 @@ object HorizonNativeBridge {
         }
     }
 
-    /**
-     * Collects lightweight, non-blocking System + Installer + Minecraft Runtime logs.
-     * Respects `enableSystemLog` setting so it causes zero overhead when disabled.
-     */
     fun readFullSystemLogs(context: Context, logEnabled: Boolean): String {
         if (!logEnabled) {
-            return "System & Game Logging is currently disabled in Settings.\nEnable 'System & Game Logs' in the Settings tab to record launcher, download, and Minecraft runtime events."
+            return "System & Game Logging is currently disabled in Settings.
+Enable 'System Logs' in the Settings tab to record launcher, download, and Minecraft runtime events."
         }
         val home = ensureHomeDirectories(context)
         val sb = StringBuilder()
-        sb.appendLine("=== HorizonZ 1.1 System & Minecraft Runtime Log ===")
+        sb.appendLine("=== HorizonZ 1.5 System & Minecraft Runtime Log ===")
         sb.appendLine("PID: ${Process.myPid()} | Data Dir: ${home.absolutePath}")
         sb.appendLine("26.3 Assets Ready: ${isMinecraft26Ready(context)}")
         sb.appendLine("---------------------------------------------------")
 
-        // 1. In-memory Launcher events
         if (memoryLogs.isNotEmpty()) {
             sb.appendLine("[Launcher Events]")
             memoryLogs.forEach { sb.appendLine(it) }
             sb.appendLine("---------------------------------------------------")
         }
 
-        // 2. Installer log file
         val installLog = File(home, "zalith-install-log.txt")
         if (installLog.exists()) {
             sb.appendLine("[Asset Installer Log]")
@@ -323,7 +447,6 @@ object HorizonNativeBridge {
             sb.appendLine("---------------------------------------------------")
         }
 
-        // 3. Native Error file if any
         val androidErr = File(home, "android-error.txt")
         if (androidErr.exists()) {
             sb.appendLine("[Native Engine Error]")
@@ -331,7 +454,6 @@ object HorizonNativeBridge {
             sb.appendLine("---------------------------------------------------")
         }
 
-        // 4. Minecraft latest.log (checked in both home and game_home)
         val latestLogCandidates = listOf(
             File(home, "logs/latest.log"),
             File(home, ".local/horizon-client/26.3/logs/latest.log")
@@ -342,14 +464,16 @@ object HorizonNativeBridge {
             sb.appendLine("---------------------------------------------------")
         }
 
-        // 5. Lightweight non-blocking process logcat snapshot (last 80 lines for current PID)
         try {
-            val pid = Process.myPid().toString()
-            val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "80", "--pid=$pid"))
+            val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "80"))
             BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
-                val lines = reader.readLines()
+                val lines = reader.readLines().filter {
+                    it.contains("horizon", ignoreCase = true) ||
+                        it.contains("Horizon", ignoreCase = false) ||
+                        it.contains("wgpu", ignoreCase = true)
+                }
                 if (lines.isNotEmpty()) {
-                    sb.appendLine("[Android Process Logcat (horizon / wgpu / rust)]")
+                    sb.appendLine("[Android Logcat (horizon / wgpu)]")
                     lines.takeLast(60).forEach { sb.appendLine(it) }
                 }
             }
@@ -364,15 +488,18 @@ object HorizonNativeBridge {
         config: HorizonConfigState,
         activeAccount: ZalithAccount
     ) {
-        writeEngineConfigs(context, config, activeAccount)
-        appendSystemLog("Launching HorizonActivity (Minecraft 26.3 Native Rust Engine)...", config.enableSystemLog)
+        saveConfig(context, config, activeAccount)
+        appendSystemLog(
+            "Launching Minecraft 26.3 (Player=${activeAccount.username}, Renderer=${config.renderer.label}, Scale=${config.renderScalePercent}%)",
+            config.enableSystemLog
+        )
         val intent = Intent(context, HorizonActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra("HORIZON_ANDROID_PUBLIC", config.publicOnDeviceAssetDownload)
             putExtra("HORIZON_NO_AUDIO", config.disableAudioSafeMode)
             putExtra("HORIZON_NO_DISCORD", !config.discordRichPresence)
             putExtra("HORIZON_PLAYER_NAME", activeAccount.username)
-            putExtra("HORIZON_WGPU_BACKEND", config.wgpuBackend.lowercase())
+            putExtra("HORIZON_WGPU_BACKEND", if (config.renderer == HorizonRendererMode.OPENGL) "gl" else "vulkan")
         }
         context.startActivity(intent)
     }

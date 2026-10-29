@@ -1,13 +1,17 @@
-# HorizonZ - Launcher (v1.2)
+# HorizonZ - Launcher (v1.5)
 
-**Real Minecraft: Java Edition 26.3 Rust Engine for Android — Material You (M3) UI, Live Asset Downloader, Process Logger & Auto-Extract `Update/` Folder System.**
+**Real Minecraft: Java Edition 26.3 Rust Engine for Android — Material You (M3) UI, 12 HD Minecraft Wallpapers, Persistent Accounts & Settings, and Direct Game Boot/Exit.**
 
 [![Build HorizonZ Launcher APK](https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml/badge.svg)](https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml)
 
-## Cara Update Cepat via Folder `Update/` (Mulai v1.2)
+## Pembaruan Utama v1.5 (`HorizonZ1.5.zip`)
 
-Mulai versi `1.2`, Anda **tidak perlu lagi mengekstrak file `.zip` secara manual**:
-1. Buka folder **[`Update/`](Update/)** di repositori GitHub Anda.
-2. Klik **Add file $ightarrow$ Upload files**, lalu pilih file `.zip` update terbaru (misalnya `HorizonZ1.3.zip`).
-3. Klik **Commit changes**.
-4. GitHub Actions (`apply-update-zip`) akan **otomatis mengekstrak seluruh isi file `.zip` tersebut dan menimpanya ke kode sumber utama (*main source*)**, menghapus file `.zip` yang sudah diekstrak dari folder `Update/`, menyimpan komit pembaruan ke branch `main`, lalu langsung merakit APK terbaru ke halaman **Releases**!
+1. **Penghapusan Total UI Bawaan `Horizon Android 0.7.4` & Perbaikan Exit Game**:
+   - Mematikan pemanggilan `self.draw_pages()` pada `crates/horizon-client/src/android/launcher.rs` sehingga layar `Horizon Android 0.7.4` tidak pernah digambar dan langsung menjalankan `self.action(events)` $ightarrow$ `game::android_game()`.
+   - Memperbaiki `restore_launcher` di `launcher.rs` serta menjalankan `HorizonActivity` di proses terpisah `android:process=":game"` agar saat keluar dari Minecraft (*Quit Game*), aplikasi langsung menutup proses game (`events.exit(); std::process::exit(0);`) dan kembali ke **HorizonZ Launcher** (tidak masuk ulang ke Minecraft).
+2. **Perbaikan Sistem Simpan Akun & Setting Game (`android-launcher.json` & `accounts.json`)**:
+   - Menyimpan daftar akun secara permanen di `zalith-accounts.json`, `accounts.json`, `android-launcher.json` (`"name"`), dan `horizon-player.txt` sehingga nama pemain tidak pernah ter-reset ke awal.
+   - Menyimpan pengaturan Launcher ke `android-launcher.json` (mengikuti skema asli `catalog.rs`: *Renderer*, *Render Scale*, *Input Mode*, *Orientation*, *Profile Slot*, *Keypad Controls*, *Perf Telemetry*) tanpa menimpa berkas `options.txt` milik Minecraft, sehingga pengaturan di dalam game tetap tersimpan permanen.
+3. **12 Wallpaper Minecraft HD (16:9) & Pembersihan Dashboard**:
+   - Menghapus tulisan status teknis (*Vulkan*, *Scale*, *Assets Ready*) dari kartu utama Dashboard.
+   - Menambahkan **12 Wallpaper Minecraft HD (1280×720, rasio 16:9 normal)** yang berganti otomatis setiap 5 detik dengan animasi *crossfade* halus di kartu utama Dashboard.

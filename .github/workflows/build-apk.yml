@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.4 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.5 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -102,30 +102,8 @@ jobs:
             SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n 1)"
           fi
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
-
-          NDK_VERSION="28.2.13676358"
-          NDK_DIR="$ANDROID_HOME/ndk/$NDK_VERSION"
-          for attempt in 1 2 3; do
-            if [ -f "$NDK_DIR/source.properties" ]; then
-              break
-            fi
-
-            echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
-            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION" && [ -f "$NDK_DIR/source.properties" ]; then
-              break
-            fi
-
-            rm -rf "$NDK_DIR" "$ANDROID_HOME/temp"
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::Unable to install Android NDK $NDK_VERSION after 3 attempts."
-              exit 1
-            fi
-            sleep "$((attempt * 10))"
-          done
-
-          test -f "$NDK_DIR/source.properties"
-          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Set up Rust Toolchain (${{ matrix.rust_target }})
         uses: dtolnay/rust-toolchain@stable
@@ -149,7 +127,7 @@ jobs:
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v14-${{ matrix.rust_target }}
+          key: horizon-real-engine-v15-${{ matrix.rust_target }}
 
       - name: Compile Real Horizon Rust Engine (libhorizon_android.so) & Stage Assets (${{ matrix.abi }})
         run: |
@@ -209,18 +187,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.4-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.5-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.4-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.4-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.5-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.5-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.4 Release APKs
+    name: Publish HorizonZ 1.5 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -240,10 +218,10 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.4 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
+          tag_name: v1.5.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.5 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
           body: |
-            ## HorizonZ - Launcher v1.4
+            ## HorizonZ - Launcher v1.5
             - **Auto-Extract `Update/` Folder System**: Upload any future `HorizonZ*.zip` into the `Update/` folder in the repository; GitHub Actions automatically extracts and overwrites the main repository source code, cleans up the `.zip`, commits to `main`, and builds the new Release APKs.
             - **Fixed `Missing control revision` Error**: Preserves upstream `packaging/android/bedrock-controls.json` during compile time (`include_str!`) and adds fallback control revision handling in `android_resources.rs`.
             - **Live System, Download & Minecraft Runtime Logs**: Expandable/minimizable Download Process Log directly below the progress indicator + full System & Game Log viewer with **Copy** button and **System Logs** toggle in Settings.

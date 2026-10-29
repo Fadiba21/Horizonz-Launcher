@@ -57,11 +57,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Dedicated :game process so exiting Minecraft terminates cleanly and returns straight to ZalithMainActivity -->
         <activity
             android:name="dev.horizon.android.HorizonActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
             android:exported="true"
             android:launchMode="singleTask"
+            android:process=":game"
             android:screenOrientation="sensorLandscape"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
             <meta-data

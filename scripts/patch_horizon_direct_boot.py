@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-# 1. Patch crates/horizon-client/src/android/launcher.rs for automatic direct boot into game::android_game()
+# 1. Patch crates/horizon-client/src/android/launcher.rs:
+#    - Disable `self.draw_pages()` (removes the built-in 'Horizon Android 0.7.4' UI completely)
+#    - Auto-trigger `self.action(events)` on `resumed()` and `RedrawRequested`
+#    - Make `restore_launcher` exit the `:game` process cleanly (`events.exit(); std::process::exit(0);`)
+#      when the player clicks Quit Game inside Minecraft so it returns to ZalithMainActivity instead of re-entering Minecraft!
 launcher_rs = Path("crates/horizon-client/src/android/launcher.rs")
 if launcher_rs.exists():
     txt = launcher_rs.read_text(encoding="utf-8")
 
+    # (a) Auto-trigger self.action(events) in resumed()
     old_resumed = """        if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
@@ -15,7 +20,7 @@ if launcher_rs.exists():
             events.exit();
             return;
         }
-        if self.game.is_none() && self.worker.is_none() {
+        if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
             if let Err(error) = self.action(events) {
                 self.fail(error);
             }
@@ -24,6 +29,18 @@ if launcher_rs.exists():
         txt = txt.replace(old_resumed, new_resumed, 1)
         print("[HorizonZ Patch] Patched Launcher::resumed for automatic direct boot!")
 
+    # (b) Remove built-in 'Horizon Android 0.7.4' page rendering (`self.draw_pages()`)
+    old_redraw = "WindowEvent::RedrawRequested => self.draw_pages(),"
+    new_redraw = """WindowEvent::RedrawRequested => {
+                if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
+                    let _ = self.action(events);
+                }
+            }"""
+    if old_redraw in txt:
+        txt = txt.replace(old_redraw, new_redraw, 1)
+        print("[HorizonZ Patch] Removed self.draw_pages() ('Horizon Android 0.7.4' UI) from RedrawRequested!")
+
+    # (c) Auto-launch game when install worker finishes
     old_worker = """        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
             if let Err(error) = result {
@@ -45,6 +62,32 @@ if launcher_rs.exists():
         txt = txt.replace(old_worker, new_worker, 1)
         print("[HorizonZ Patch] Patched Launcher::about_to_wait to auto-launch game::android_game()!")
 
+    # (d) Fix game exit (`restore_launcher`): when exiting Minecraft (`take_launcher_return()`),
+    #     close the `:game` process cleanly so Android returns to ZalithMainActivity instead of re-entering Minecraft!
+    old_restore = """    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
+        if !horizon_client::android_runtime::take_launcher_return() {
+            return;
+        }
+        if let Some(mut game) = self.game.take() {
+            game.exiting(events);
+            drop(game);
+        }"""
+    new_restore = """    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
+        if !horizon_client::android_runtime::take_launcher_return() {
+            return;
+        }
+        if let Some(mut game) = self.game.take() {
+            game.exiting(events);
+            drop(game);
+        }
+        crate::performance::stop();
+        crate::platform::hide();
+        events.exit();
+        std::process::exit(0);"""
+    if old_restore in txt:
+        txt = txt.replace(old_restore, new_restore, 1)
+        print("[HorizonZ Patch] Patched restore_launcher to exit cleanly back to ZalithMainActivity on game quit!")
+
     launcher_rs.write_text(txt, encoding="utf-8")
 
 # 2. Make controls_with_progress in crates/horizon-client/src/android_resources.rs fault-tolerant
@@ -59,13 +102,12 @@ if android_res_rs.exists():
         print("[HorizonZ Patch] Patched android_resources.rs with guaranteed control revision fallback!")
 
 # 3. Append JNI official_install + detailed Download Process Logger to crates/horizon-client/src/android_main.rs
-# Uses #[unsafe(no_mangle)] as required by Rust 2024 edition in crates/horizon-client!
 android_main_rs = Path("crates/horizon-client/src/android_main.rs")
 if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.4 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
+// === HorizonZ 1.5 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -101,7 +143,8 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     );
     let _ = std::fs::write(
         home_path.join("zalith-install-log.txt"),
-        "[Installer] Initializing Minecraft 26.3 official asset installer...\n",
+        "[Installer] Initializing Minecraft 26.3 official asset installer...
+",
     );
 
     std::thread::spawn(move || {
@@ -156,7 +199,8 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
                 );
             }
             Err(err) => {
-                let clean_err = err.to_string().replace('"', "'").replace('\n', " ");
+                let clean_err = err.to_string().replace('"', "'").replace('
+', " ");
                 append_install_log(&home_path, &format!("[Error] Installation failed: {}", clean_err));
                 let json = format!(
                     r#"{{"ready":false,"running":false,"stage":"Error","done":0,"total":100,"error":"{}"}}"#,
