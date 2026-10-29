@@ -48,7 +48,6 @@ if launcher_rs.exists():
     launcher_rs.write_text(txt, encoding="utf-8")
 
 # 2. Make controls_with_progress in crates/horizon-client/src/android_resources.rs fault-tolerant
-#    and ensure "../../../packaging/android/bedrock-controls.json" always has a valid revision fallback
 android_res_rs = Path("crates/horizon-client/src/android_resources.rs")
 if android_res_rs.exists():
     res_txt = android_res_rs.read_text(encoding="utf-8")
@@ -60,12 +59,13 @@ if android_res_rs.exists():
         print("[HorizonZ Patch] Patched android_resources.rs with guaranteed control revision fallback!")
 
 # 3. Append JNI official_install + detailed Download Process Logger to crates/horizon-client/src/android_main.rs
+# Uses #[unsafe(no_mangle)] as required by Rust 2024 edition in crates/horizon-client!
 android_main_rs = Path("crates/horizon-client/src/android_main.rs")
 if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
-    jni_bridge_code = '''
+    jni_bridge_code = r'''
 
-// === HorizonZ 1.1 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
+// === HorizonZ 1.4 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -75,7 +75,7 @@ fn append_install_log(home: &std::path::Path, msg: &str) {
     log::info!("[HorizonZ-Installer] {}", msg);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeIsGameInstalled(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -86,7 +86,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     if horizon_client::official_install::ready(home_path) { 1 } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeStartOfficialInstall(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -106,23 +106,22 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
 
     std::thread::spawn(move || {
         let p_file = home_path.join("zalith-install-progress.json");
-        let last_stage = std::sync::Mutex::new(String::new());
         let last_logged_pct = std::sync::atomic::AtomicU64::new(0);
+        let last_stage_code = std::sync::atomic::AtomicU64::new(999);
 
         let res = horizon_client::official_install::install_with_progress(&home_path, |prog| {
             let stage_name = format!("{:?}", prog.stage);
             let total = prog.total.max(1);
             let pct = (prog.done.saturating_mul(100)) / total;
+            let stage_id = prog.stage as u64;
 
-            if let Ok(mut guard) = last_stage.lock() {
-                if *guard != stage_name {
-                    *guard = stage_name.clone();
-                    append_install_log(
-                        &home_path,
-                        &format!("[Stage: {}] Started (target items: {})", stage_name, prog.total),
-                    );
-                    last_logged_pct.store(0, std::sync::atomic::Ordering::Relaxed);
-                }
+            let prev_stage = last_stage_code.swap(stage_id, std::sync::atomic::Ordering::Relaxed);
+            if prev_stage != stage_id {
+                append_install_log(
+                    &home_path,
+                    &format!("[Stage: {}] Started (target items: {})", stage_name, prog.total),
+                );
+                last_logged_pct.store(0, std::sync::atomic::Ordering::Relaxed);
             }
 
             let prev_pct = last_logged_pct.load(std::sync::atomic::Ordering::Relaxed);
@@ -170,7 +169,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeGetInstallProgress(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
