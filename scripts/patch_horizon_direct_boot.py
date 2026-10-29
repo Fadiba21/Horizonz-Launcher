@@ -62,7 +62,7 @@ if android_main_rs.exists():
     jni_bridge_code = '''
 
 // === HorizonZ Zalith Material 3 Launcher JNI Bridge for Official 26.3 Asset Installer ===
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeIsGameInstalled(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -73,7 +73,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     if horizon_client::official_install::ready(home_path) { 1 } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeStartOfficialInstall(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -110,7 +110,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
                 );
             }
             Err(err) => {
-                let clean_err = err.to_string().replace('"', "'").replace('\n', " ");
+                let clean_err = err.to_string().replace('"', "'").replace('\\n', " ");
                 let json = format!(
                     r#"{{"ready":false,"running":false,"stage":"Error","done":0,"total":100,"error":"{}"}}"#,
                     clean_err
@@ -122,7 +122,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativeGetInstallProgress(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
