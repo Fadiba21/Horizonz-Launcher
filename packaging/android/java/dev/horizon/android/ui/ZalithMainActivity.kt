@@ -149,8 +149,8 @@ class ZalithMainActivity : ComponentActivity() {
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
             val scope = rememberCoroutineScope()
-            var config by remember { mutableStateOf(HorizonNativeBridge.loadSavedConfig(context)) }
-            var accounts by remember { mutableStateOf(HorizonNativeBridge.loadSavedAccounts(context)) }
+            var config by remember { mutableStateOf<HorizonConfigState>(HorizonNativeBridge.loadSavedConfig(context)) }
+            var accounts by remember { mutableStateOf<List<ZalithAccount>>(HorizonNativeBridge.loadSavedAccounts(context)) }
             val activeAccount = accounts.firstOrNull { it.isActive } ?: accounts.first()
 
             var isLauncherHibernated by remember { mutableStateOf(false) }
@@ -1010,7 +1010,7 @@ fun ZalithCleanLauncherScreen(
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
-    var installStatus by remember { mutableStateOf(HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)) }
+    var installStatus by remember { mutableStateOf<AssetInstallStatus>(HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)) }
 
     // Cache the active account's 64x64 skin bitmap for instant rendering on Dashboard, TopBar, & Skin Studio
     val activeSkinBitmap = remember(activeAccount.id, activeAccount.skinPath, activeAccount.slimSkinModel) {
@@ -1083,7 +1083,7 @@ fun ZalithCleanLauncherScreen(
 
                 // Main Content Viewport:
                 // - Occupies a constant 100% of remaining width across ALL tabs!
-                // - Uses `.using(null)` (`SizeTransform = null`) so there is ZERO end-of-animation snap ("jeduk")!
+                // - Uses `.using(sizeTransform = null)` (`SizeTransform = null`) so there is ZERO end-of-animation snap ("jeduk")!
                 AnimatedContent(
                     targetState = selectedTab,
                     modifier = Modifier
@@ -1098,7 +1098,7 @@ fun ZalithCleanLauncherScreen(
                             .togetherWith(
                                 fadeOut(animationSpec = tween(160, easing = FastOutLinearInEasing))
                             )
-                            .using(null)
+                            .using(sizeTransform = null)
                     },
                     label = "MainTabTransition"
                 ) { tab ->
@@ -1263,7 +1263,7 @@ private fun ZalithReferenceTopBar(
             AnimatedContent(
                 targetState = selectedTab,
                 transitionSpec = {
-                    fadeIn(tween(180)).togetherWith(fadeOut(tween(140))).using(null)
+                    fadeIn(tween(180)).togetherWith(fadeOut(tween(140))).using(sizeTransform = null)
                 },
                 label = "TopBarTitleAnim"
             ) { tab ->
@@ -1513,7 +1513,7 @@ private fun CleanHomeViewport(
             AnimatedContent(
                 targetState = wallpaperIndex % totalCount.coerceAtLeast(1),
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(900)).togetherWith(fadeOut(animationSpec = tween(900))).using(null)
+                    fadeIn(animationSpec = tween(900)).togetherWith(fadeOut(animationSpec = tween(900))).using(sizeTransform = null)
                 },
                 modifier = Modifier.fillMaxSize(),
                 label = "MinecraftWallpaperCarousel"
@@ -1627,7 +1627,7 @@ private fun CleanHomeViewport(
                             .togetherWith(
                                 slideOutVertically(tween(260)) { h -> -h / 2 } + fadeOut(tween(240))
                             )
-                            .using(null)
+                            .using(sizeTransform = null)
                     },
                     modifier = Modifier
                         .fillMaxWidth(0.92f)
@@ -1743,7 +1743,7 @@ private fun CleanAccountsAndSkinsViewport(
                 (fadeIn(tween(200, easing = FastOutSlowInEasing)) +
                     slideInVertically(tween(200, easing = FastOutSlowInEasing)) { h -> h / 14 })
                     .togetherWith(fadeOut(tween(150)))
-                    .using(null)
+                    .using(sizeTransform = null)
             },
             modifier = Modifier
                 .weight(1f)
@@ -3540,7 +3540,7 @@ private fun CleanFilesViewport(
                     transitionSpec = {
                         (fadeIn(tween(190)) + slideInVertically(tween(190)) { h -> h / 14 })
                             .togetherWith(fadeOut(tween(140)))
-                            .using(null)
+                            .using(sizeTransform = null)
                     },
                     modifier = Modifier.fillMaxSize(),
                     label = "FilesFolderTransition"
@@ -3720,7 +3720,7 @@ private fun CleanSettingsViewport(
                 (fadeIn(tween(190, easing = FastOutSlowInEasing)) +
                     slideInVertically(tween(190, easing = FastOutSlowInEasing)) { h -> h / 14 })
                     .togetherWith(fadeOut(tween(140)))
-                    .using(null)
+                    .using(sizeTransform = null)
             },
             modifier = Modifier
                 .weight(1f)

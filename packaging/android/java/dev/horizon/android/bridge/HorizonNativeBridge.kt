@@ -173,7 +173,7 @@ enum class BuiltInSkinPreset(
 
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.12"
+    const val INSTALLED_LAUNCHER_VERSION = "1.13"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
@@ -343,6 +343,28 @@ object HorizonNativeBridge {
     }
 
     fun generatePresetSkinBitmap(preset: BuiltInSkinPreset): Bitmap {
+        return generateSkinBitmapFromColors(
+            slimModel = preset.slimModel,
+            skinTone = preset.skinTone,
+            hairColor = preset.hairColor,
+            eyeColor = preset.eyeColor,
+            shirtPrimary = preset.shirtPrimary,
+            shirtSecondary = preset.shirtSecondary,
+            pantsColor = preset.pantsColor,
+            bootsColor = preset.bootsColor
+        )
+    }
+
+    fun generateSkinBitmapFromColors(
+        slimModel: Boolean,
+        skinTone: Int,
+        hairColor: Int,
+        eyeColor: Int,
+        shirtPrimary: Int,
+        shirtSecondary: Int,
+        pantsColor: Int,
+        bootsColor: Int
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
         bmp.eraseColor(Color.TRANSPARENT)
         val canvas = Canvas(bmp)
@@ -354,60 +376,59 @@ object HorizonNativeBridge {
         }
 
         // 1. Head cube net (8x8x8 at 0,0)
-        fillRect(8, 0, 8, 8, preset.hairColor) // Top
-        fillRect(16, 0, 8, 8, preset.skinTone) // Bottom
-        fillRect(0, 8, 8, 8, preset.skinTone)  // Right
-        fillRect(8, 8, 8, 8, preset.skinTone)  // Front face
-        fillRect(16, 8, 8, 8, preset.skinTone) // Left
-        fillRect(24, 8, 8, 8, preset.hairColor) // Back
+        fillRect(8, 0, 8, 8, hairColor)
+        fillRect(16, 0, 8, 8, skinTone)
+        fillRect(0, 8, 8, 8, skinTone)
+        fillRect(8, 8, 8, 8, skinTone)
+        fillRect(16, 8, 8, 8, skinTone)
+        fillRect(24, 8, 8, 8, hairColor)
 
         // Hairline on front & sides
-        fillRect(8, 8, 8, 2, preset.hairColor)
-        fillRect(8, 10, 1, 2, preset.hairColor)
-        fillRect(15, 10, 1, 2, preset.hairColor)
-        fillRect(0, 8, 8, 3, preset.hairColor)
-        fillRect(16, 8, 8, 3, preset.hairColor)
+        fillRect(8, 8, 8, 2, hairColor)
+        fillRect(8, 10, 1, 2, hairColor)
+        fillRect(15, 10, 1, 2, hairColor)
+        fillRect(0, 8, 8, 3, hairColor)
+        fillRect(16, 8, 8, 3, hairColor)
 
         // Eyes (whites + irises)
         fillRect(9, 12, 1, 1, Color.WHITE)
-        fillRect(10, 12, 1, 1, preset.eyeColor)
-        fillRect(13, 12, 1, 1, preset.eyeColor)
+        fillRect(10, 12, 1, 1, eyeColor)
+        fillRect(13, 12, 1, 1, eyeColor)
         fillRect(14, 12, 1, 1, Color.WHITE)
 
         // Nose / Mouth
-        fillRect(11, 13, 2, 1, darkenColor(preset.skinTone, 0.85f))
-        fillRect(11, 14, 2, 1, darkenColor(preset.skinTone, 0.72f))
+        fillRect(11, 13, 2, 1, darkenColor(skinTone, 0.85f))
+        fillRect(11, 14, 2, 1, darkenColor(skinTone, 0.72f))
 
         // Hat / Helmet outer layer (32,0)
-        fillRect(40, 8, 8, 2, darkenColor(preset.hairColor, 1.12f))
+        fillRect(40, 8, 8, 2, darkenColor(hairColor, 1.12f))
 
         // 2. Torso / Body (16,16)
-        fillRect(20, 16, 8, 4, preset.shirtPrimary) // Top
-        fillRect(28, 16, 8, 4, preset.shirtSecondary) // Bottom
-        fillRect(16, 20, 24, 12, preset.shirtPrimary) // Sides, Front, Back
-        // Chest accent detail on front torso (20,20)-(28,32)
-        fillRect(22, 20, 4, 2, preset.shirtSecondary)
-        fillRect(21, 23, 6, 3, preset.shirtSecondary)
+        fillRect(20, 16, 8, 4, shirtPrimary)
+        fillRect(28, 16, 8, 4, shirtSecondary)
+        fillRect(16, 20, 24, 12, shirtPrimary)
+        fillRect(22, 20, 4, 2, shirtSecondary)
+        fillRect(21, 23, 6, 3, shirtSecondary)
 
         // 3. Right Leg (0,16) & Left Leg (16,48)
-        fillRect(4, 16, 4, 4, preset.pantsColor)
-        fillRect(0, 20, 16, 9, preset.pantsColor)
-        fillRect(0, 29, 16, 3, preset.bootsColor)
+        fillRect(4, 16, 4, 4, pantsColor)
+        fillRect(0, 20, 16, 9, pantsColor)
+        fillRect(0, 29, 16, 3, bootsColor)
 
-        fillRect(20, 48, 4, 4, preset.pantsColor)
-        fillRect(16, 52, 16, 9, preset.pantsColor)
-        fillRect(16, 61, 16, 3, preset.bootsColor)
+        fillRect(20, 48, 4, 4, pantsColor)
+        fillRect(16, 52, 16, 9, pantsColor)
+        fillRect(16, 61, 16, 3, bootsColor)
 
         // 4. Right Arm (40,16) & Left Arm (32,48)
-        val armW = if (preset.slimModel) 3 else 4
-        val armTotalW = if (preset.slimModel) 14 else 16
-        fillRect(44, 16, armW, 4, preset.shirtPrimary)
-        fillRect(40, 20, armTotalW, 8, preset.shirtPrimary)
-        fillRect(40, 28, armTotalW, 4, preset.skinTone)
+        val armW = if (slimModel) 3 else 4
+        val armTotalW = if (slimModel) 14 else 16
+        fillRect(44, 16, armW, 4, shirtPrimary)
+        fillRect(40, 20, armTotalW, 8, shirtPrimary)
+        fillRect(40, 28, armTotalW, 4, skinTone)
 
-        fillRect(36, 48, armW, 4, preset.shirtPrimary)
-        fillRect(32, 52, armTotalW, 8, preset.shirtPrimary)
-        fillRect(32, 60, armTotalW, 4, preset.skinTone)
+        fillRect(36, 48, armW, 4, shirtPrimary)
+        fillRect(32, 52, armTotalW, 8, shirtPrimary)
+        fillRect(32, 60, armTotalW, 4, skinTone)
 
         return bmp
     }
@@ -604,10 +625,7 @@ object HorizonNativeBridge {
         val bootsTone = darkenColor(pantsTone, 0.65f)
 
         // Start from a clean base template with those sampled colors
-        val presetTemplate = BuiltInSkinPreset(
-            id = "photo_skin",
-            title = "Photo Skin",
-            subtitle = "",
+        val base = generateSkinBitmapFromColors(
             slimModel = slimModel,
             skinTone = skinTone,
             hairColor = hairTone,
@@ -617,7 +635,6 @@ object HorizonNativeBridge {
             pantsColor = pantsTone,
             bootsColor = bootsTone
         )
-        val base = generatePresetSkinBitmap(presetTemplate)
         val canvas = Canvas(out)
         canvas.drawBitmap(base, 0f, 0f, null)
 
@@ -671,7 +688,7 @@ object HorizonNativeBridge {
     /**
      * Synchronizes the active 64x64 player skin PNG directly into:
      * 1. `filesDir/custom_skin_active.png` (read by Rust `Launcher::resumed` before `self.action(events)`).
-     * 2. All 9 vanilla 26.3 `DefaultPlayerSkin` slots in `.local/horizon-client/26.3/assets/minecraft/textures/entity/player/{wide,slim}/*.png`
+     * 2. All 9 vanilla 26.3 `DefaultPlayerSkin` slots in `.local/horizon-client/26.3/assets/minecraft/textures/entity/player/{wide,slim}/<name>.png`
      *    (after backing up original vanilla skins to `vanilla_skins_backup/`).
      * 3. Auto-generated resource pack `resourcepacks/HorizonZ-CustomSkin.zip` enabled in `options.txt`.
      */
@@ -1848,7 +1865,7 @@ object HorizonNativeBridge {
 
     fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
         return try {
-            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 12, 0)
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 13, 0)
             val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000
                 readTimeout = 8000
