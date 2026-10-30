@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.6 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.7 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply Direct-Boot Patch
+      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.7 Patches
         run: |
           rm -rf /tmp/horizon-upstream
           git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
@@ -149,9 +149,9 @@ jobs:
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v16-${{ matrix.rust_target }}
+          key: horizon-real-engine-v17-${{ matrix.rust_target }}
 
-      - name: Compile Real Horizon Rust Engine (libhorizon_android.so) & Stage Assets (${{ matrix.abi }})
+      - name: Compile Real Horizon Rust Engine (libhorizon_android.so), Prestage 60 Touch Controls & Real HD Wallpapers (${{ matrix.abi }})
         run: |
           mkdir -p .local/android/gradle-jni/${{ matrix.abi }}
           mkdir -p .local/android/gradle-assets
@@ -166,6 +166,9 @@ jobs:
             fi
             rm -rf /tmp/upstream_assets.apk /tmp/upstream_assets_dir
           fi
+
+          # Prestage all 60 Bedrock Touch Control icons into engine-data.zip AND fetch real HD 16:9 Minecraft wallpapers!
+          python3 scripts/prestage_controls_and_wallpapers.py
 
           TOOLCHAIN_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export HORIZON_ANDROID_PUBLIC=1
@@ -220,18 +223,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.6-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.7-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.6-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.6-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.7-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.7-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.6 Release APKs
+    name: Publish HorizonZ 1.7 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -251,14 +254,16 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.6.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.6 (Build #${{ github.run_number }} • Direct Game Boot + 12 HD Wallpapers + Persistent Accounts)"
+          tag_name: v1.7.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.7 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
           body: |
-            ## HorizonZ - Launcher v1.6
-            - **Fixed Rust & Kotlin Build Errors (Exit Code 101)**: Fixed multiline string/char literal escapes in `scripts/patch_horizon_direct_boot.py`, `HorizonNativeBridge.kt`, and `ZalithMainActivity.kt`, plus `Ok(())` return in `WindowEvent::RedrawRequested` and NDK 28 retry logic.
-            - **Removed Built-in `Horizon Android 0.7.4` UI & Fixed Game Exit**: Bypasses `draw_pages()` in `launcher.rs` and cleanly terminates the `:game` process (`restore_launcher`) on Quit Game so exiting Minecraft returns straight to HorizonZ Launcher.
-            - **Persistent Accounts & Non-Destructive In-Game Settings**: Saves accounts to `zalith-accounts.json` / `accounts.json` / `android-launcher.json` and preserves Minecraft's `options.txt` across restarts.
-            - **12 HD 16:9 Minecraft Wallpapers**: Cycles 12 HD 1280x720 Minecraft biome wallpapers every 5 seconds on the Dashboard card.
+            ## HorizonZ - Launcher v1.7
+            - **Fixed Touch Controls 17/60 Stall (`5/6 Preparing Touch Controls`)**: Pre-bundles all 60 Bedrock touch control icons into `engine-data.zip` during CI build AND patches `controls_with_progress` in `android_resources.rs` with 6s/10s timeouts, jsDelivr CDN mirror fallback, and safe PNG fallback.
+            - **Background Download + Live Android System Notification**: Added `HorizonDownloadService` (`foregroundServiceType="dataSync"`) so asset downloads continue in the background when the launcher is minimized and display live percentage, stage, download speed (`MB/s`), and URL in the phone's notification bar.
+            - **Verbose Download Process Log**: Displays exact download URLs (`piston-meta.mojang.com`, `resources.download.minecraft.net`, `raw.githubusercontent.com/Mojang/bedrock-samples`), byte progress (`MB / MB`), and live download speed (`MB/s` / `KB/s`).
+            - **Complete Settings & Runtime Sync**: Fixed `"open-gl"` serde key for `catalog.rs`, synced `horizon-keypad.json` (`enabled`), added two-way `options.txt` sync (`renderDistance`, `simulationDistance`, `maxFps`, `guiScale`, `enableVsync`, `fullscreen`), and added local Mod/Shader/ResourcePack toggle switches.
+            - **Guaranteed Clean Game Exit to Launcher**: Added single-shot `GAME_LAUNCHED_ONCE` guard in `launcher.rs`, `zalith-game-exited.flag` UI-thread finish watchdog, and one-time `zalith-launch-token.txt` in `HorizonActivity.java` so quitting Minecraft never re-enters Minecraft.
+            - **Real Web HD 16:9 Minecraft Wallpapers + Clearable System Logs**: Fetches 12 real 1080p Minecraft update & shader wallpapers from `Lxtharia/minegrub-theme` and `usman-369/wallpapers` cropped to 1280x720 (16:9), plus supports custom wallpaper import from gallery.
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt

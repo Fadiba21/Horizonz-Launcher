@@ -12,12 +12,21 @@ enum class AccountType(val badge: String) {
     MICROSOFT("Microsoft")
 }
 
+/**
+ * Matches `crates/horizon-client/src/android/catalog.rs` `RendererMode` (`#[serde(rename_all = "kebab-case")]`):
+ * - VulkanCompatibility -> "vulkan-compatibility"
+ * - Vulkan -> "vulkan"
+ * - OpenGl -> "open-gl" (CRITICAL: must be "open-gl", NOT "opengl"!)
+ */
 enum class HorizonRendererMode(val serdeKey: String, val label: String) {
     VULKAN_COMPAT("vulkan-compatibility", "Vulkan Compat"),
     VULKAN("vulkan", "Vulkan"),
-    OPENGL("opengl", "OpenGL ES")
+    OPENGL("open-gl", "OpenGL ES")
 }
 
+/**
+ * Matches `crates/horizon-client-render/src/android_gamepad.rs` `InputMode` (`#[serde(rename_all = "kebab-case")]`).
+ */
 enum class HorizonInputHost(val serdeKey: String, val label: String) {
     AUTO("auto", "Auto"),
     TOUCH("touch", "Touch"),
@@ -25,12 +34,20 @@ enum class HorizonInputHost(val serdeKey: String, val label: String) {
     CONTROLLER("controller", "Controller")
 }
 
+/**
+ * Matches `crates/horizon-client/src/android/catalog.rs` `Orientation` (`#[serde(rename_all = "kebab-case")]`).
+ */
 enum class HorizonOrientation(val serdeKey: String, val label: String) {
     LANDSCAPE("landscape", "Landscape"),
     REVERSE_LANDSCAPE("reverse-landscape", "Flipped"),
-    AUTO("auto", "Auto")
+    PORTRAIT("portrait", "Portrait"),
+    REVERSE_PORTRAIT("reverse-portrait", "Rev Portrait"),
+    AUTO("auto", "Auto Sensor")
 }
 
+/**
+ * Matches `crates/horizon-client/src/android/shader_catalog.rs` `Origin` (`#[serde(rename_all = "kebab-case")]`).
+ */
 enum class HorizonContentOrigin(val serdeKey: String, val label: String) {
     HORIZON("horizon", "Horizon"),
     MODRINTH("modrinth", "Modrinth")
@@ -52,7 +69,7 @@ data class ZalithAccount(
 )
 
 /**
- * Aligned directly with `crates/horizon-client/src/android/catalog.rs` (`android-launcher.json`).
+ * Complete Launcher + Upstream `catalog.rs` + Two-Way Minecraft `options.txt` Sync State.
  */
 data class HorizonConfigState(
     val profile: Int = 0,
@@ -66,6 +83,15 @@ data class HorizonConfigState(
     val shaderSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,
     val defaultServer: String = "",
     val proxy: String = "",
+    // Two-way synced Minecraft in-game options.txt parameters
+    val mcRenderDistance: Int = 8,
+    val mcSimulationDistance: Int = 8,
+    val mcMaxFps: Int = 120,
+    val mcGuiScale: Int = 0,
+    val mcFov: Int = 70,
+    val mcVsync: Boolean = true,
+    val mcFullscreen: Boolean = true,
+    // Launcher UI & Runtime Preferences
     val themePalette: ZalithThemePalette = ZalithThemePalette.MATERIAL_YOU,
     val useDynamicColor: Boolean = true,
     val enableSystemLog: Boolean = true,

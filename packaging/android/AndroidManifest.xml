@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -57,12 +61,14 @@
             </intent-filter>
         </activity>
 
-        <!-- Dedicated :game process so exiting Minecraft terminates cleanly and returns straight to ZalithMainActivity -->
+        <!-- Dedicated :game process with single-shot launch token and clean finish on quit -->
         <activity
             android:name="dev.horizon.android.HorizonActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
-            android:exported="true"
-            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleInstance"
             android:process=":game"
             android:screenOrientation="sensorLandscape"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -73,8 +79,14 @@
 
         <activity-alias
             android:name="com.google.androidgamesdk.GameActivity"
-            android:exported="true"
+            android:exported="false"
             android:targetActivity="dev.horizon.android.HorizonActivity" />
+
+        <service
+            android:name="dev.horizon.android.service.HorizonDownloadService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <provider
             android:name="dev.horizon.android.HorizonDocumentsProvider"

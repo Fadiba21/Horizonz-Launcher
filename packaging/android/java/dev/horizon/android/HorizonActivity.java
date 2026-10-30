@@ -2,6 +2,7 @@ package dev.horizon.android;
 
 import android.app.NativeActivity;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -10,18 +11,21 @@ import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 
+import dev.horizon.android.ui.ZalithMainActivity;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
- * NativeActivity for the real Vasysik/horizon-android + horizon-rust/horizon 26.3 engine.
- * Loads libhorizon_android.so (compiled from crates/horizon-client/src/android_main.rs)
- * with HORIZON_DIRECT_GAME=1 so it boots straight into game::android_game().
+ * NativeActivity for the Vasysik/horizon-android + horizon-rust/horizon 26.3 engine.
+ * Guaranteed single-shot launch & clean return to ZalithMainActivity on game exit.
  */
 public final class HorizonActivity extends NativeActivity {
     private static final String TAG = "HorizonActivity";
     public static final int SAF_DOCUMENT_REQUEST_CODE = 4101;
+    private volatile boolean watchdogRunning = true;
 
     static {
         try {
@@ -35,10 +39,120 @@ public final class HorizonActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        File homeDir = getFilesDir();
+        File tokenFile = new File(homeDir, "zalith-launch-token.txt");
+        File exitFlag = new File(homeDir, "zalith-game-exited.flag");
+
+        // Guard against Android ActivityManager auto-restarting HorizonActivity after Quit Game!
+        if (savedInstanceState != null || exitFlag.exists() || !tokenFile.exists()) {
+            Log.i(TAG, "No active launch token (or exit flag present) — returning to ZalithMainActivity.");
+            exitFlag.delete();
+            tokenFile.delete();
+            returnToLauncherAndFinish();
+            super.onCreate(null);
+            return;
+        }
+
+        // Consume the one-time launch token immediately so any subsequent auto-restart is blocked
+        tokenFile.delete();
+        exitFlag.delete();
+
+        appendCrossProcessLog(homeDir, "[GameProcess] Starting HorizonActivity (:game process) for Minecraft 26.3.");
         ensureEngineDataExtracted();
         applyZalithLaunchEnvironment(getIntent());
+        applyRequestedOrientationFromIntent(getIntent());
         enableImmersiveFullscreen();
+        startExitWatchdog(homeDir);
         super.onCreate(savedInstanceState);
+    }
+
+    private void startExitWatchdog(final File homeDir) {
+        Thread watchdog = new Thread(() -> {
+            File exitFlag = new File(homeDir, "zalith-game-exited.flag");
+            while (watchdogRunning) {
+                try {
+                    if (exitFlag.exists()) {
+                        exitFlag.delete();
+                        appendCrossProcessLog(homeDir, "[GameProcess] Quit Game detected — closing :game activity and returning to HorizonZ Launcher.");
+                        runOnUiThread(this::returnToLauncherAndFinish);
+                        break;
+                    }
+                    Thread.sleep(150L);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+            }
+        }, "HorizonZ-ExitWatchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+    }
+
+    private void returnToLauncherAndFinish() {
+        watchdogRunning = false;
+        try {
+            Intent backIntent = new Intent(this, ZalithMainActivity.class);
+            backIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(backIntent);
+        } catch (Exception ignored) {
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                finishAndRemoveTask();
+            } else {
+                finish();
+            }
+        } catch (Exception ignored) {
+            finish();
+        }
+        new Thread(() -> {
+            try {
+                Thread.sleep(180L);
+            } catch (InterruptedException ignored) {
+            }
+            android.os.Process.killProcess(android.os.Process.myPid());
+            System.exit(0);
+        }).start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        watchdogRunning = false;
+        super.onDestroy();
+    }
+
+    private void applyRequestedOrientationFromIntent(Intent intent) {
+        if (intent == null) return;
+        String orient = intent.getStringExtra("HORIZON_ORIENTATION");
+        if (orient == null) return;
+        switch (orient) {
+            case "landscape":
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                break;
+            case "reverse-landscape":
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
+                break;
+            case "portrait":
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                break;
+            case "reverse-portrait":
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT);
+                break;
+            case "auto":
+            default:
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
+                break;
+        }
+    }
+
+    private void appendCrossProcessLog(File homeDir, String msg) {
+        try {
+            File logFile = new File(homeDir, "zalith-system.log");
+            String line = msg + "\n";
+            try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
+                fos.write(line.getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void ensureEngineDataExtracted() {
@@ -122,7 +236,7 @@ public final class HorizonActivity extends NativeActivity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == SAF_DOCUMENT_REQUEST_CODE) {
-            String uriString = "";
+            String uriString = null;
             if (data != null && data.getData() != null) {
                 Uri uri = data.getData();
                 try {
