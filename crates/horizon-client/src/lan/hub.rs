@@ -1437,6 +1437,16 @@ impl Hub {
             })
             .collect();
         self.encoder.warm(&columns);
+        for c in &columns {
+            let around: Vec<String> = (-1..=1)
+                .flat_map(|dz| (-1..=1).map(move |dx| (dx, dz)))
+                .map(|(dx, dz)| match world.chunks.get(&(c.x + dx, c.z + dz)) {
+                    Some(n) => format!("{dx},{dz}:{:?}{}", self.encoder.debug_top(n), if n.lit { "" } else { "u" }),
+                    None => format!("{dx},{dz}:-"),
+                })
+                .collect();
+            eprintln!("LLDEBUG tick {} send {},{} {}", self.ticks, c.x, c.z, around.join(" "));
+        }
         let mut bodies: Vec<Vec<u8>> = columns
             .iter()
             .map(|c| self.encoder.body_in(c, world))

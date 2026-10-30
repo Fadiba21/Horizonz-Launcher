@@ -559,6 +559,12 @@ impl ChunkEncoder {
         bits
     }
 
+    /// DEBUG #4294: the highest non-air section.
+    pub fn debug_top(&self, chunk: &Chunk) -> Option<usize> {
+        let bits = self.occupied(chunk);
+        (0..64).rev().find(|&i| bits.contains(i))
+    }
+
     /// The non-air sections of the column and its neighbours, as bits.
     fn around(&self, chunk: &Chunk, world: &crate::world::World) -> SectionMask {
         let mut around = SectionMask::EMPTY;
