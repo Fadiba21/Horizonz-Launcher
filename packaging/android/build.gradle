@@ -16,8 +16,8 @@ android {
         applicationId 'dev.horizon.android'
         minSdk customMinSdk
         targetSdk 35
-        versionCode 39
-        versionName '1.15.0-HorizonZ'
+        versionCode 40
+        versionName '1.16.0-HorizonZ'
 
         ndk {
             if (targetAbi != '') {

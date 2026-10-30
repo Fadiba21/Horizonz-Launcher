@@ -13,27 +13,36 @@ enum class ZalithNavTab(val title: String) {
 enum class StoreCategory(
     val label: String,
     val headerTitle: String,
-    val modrinthProjectType: String,
-    val targetFolder: String
+    val kindFilter: String,
+    val targetFolder: String,
+    val badgeLabel: String
 ) {
-    MOD("Mod", "Download - Mod", "mod", "mods"),
-    RESOURCE_PACK("Resource Pack", "Download - Resource Pack", "resourcepack", "resourcepacks"),
-    SAVES("Saves", "Download - Saves", "datapack", "saves"),
-    SHADER_PACK("Shader Pack", "Download - Shader Pack", "shader", "shaderpacks"),
-    MODPACK("Modpack", "Download - Modpack", "modpack", "mods")
+    ALL("All", "Horizon Mods — All", "all", "horizon-mods", "ALL"),
+    MOD("Mods", "Horizon Mods — Mods", "mod", "horizon-mods", "MOD"),
+    NATIVE_MOD("Native Mods", "Horizon Mods — Native Mods", "native-mod", "horizon-native-mods", "NATIVE MOD"),
+    MODPACK("Modpacks", "Horizon Mods — Modpacks", "modpack", "horizon-packs", "MODPACK"),
+    RESOURCE_PACK("Resource Packs", "Horizon Mods — Resource Packs", "resourcepack", "resourcepacks", "RESOURCE PACK"),
+    SHADER_PACK("Shader Packs", "Horizon Mods — Shader Packs", "shader", "shaderpacks", "SHADER PACK")
 }
 
-enum class StoreTargetPlatform(val label: String) {
-    MODRINTH("Modrinth"),
-    HORIZON("Horizon"),
-    ALL("All Platforms")
+enum class StoreSortOption(val label: String) {
+    MOST_DOWNLOADED("Most downloaded"),
+    BEST_RATED("Best rated"),
+    RECENTLY_UPDATED("Recently updated"),
+    NAME_AZ("Name (A–Z)")
 }
 
-enum class StoreSortOption(val label: String, val modrinthIndex: String) {
-    RELEVANCE("Relevance", "relevance"),
-    DOWNLOADS("Total Downloads", "downloads"),
-    POPULARITY("Popularity", "follows"),
-    UPDATED("Recently Updated", "updated")
+enum class StoreStatusFilter(val label: String) {
+    ALL("All Projects"),
+    INSTALLED("Installed Only"),
+    UPDATES("Updates Available"),
+    OFFICIAL_SIGNED("Official & Signed")
+}
+
+enum class StoreInstallState {
+    NOT_INSTALLED,
+    INSTALLED,
+    UPDATE_AVAILABLE
 }
 
 data class StoreVersionRelease(
@@ -41,13 +50,15 @@ data class StoreVersionRelease(
     val name: String,
     val versionNumber: String,
     val mcVersions: List<String>,
-    val loaders: List<String>,
+    val kindLabel: String = "MOD",
     val releaseType: String = "release",
     val downloadsCount: Long = 0L,
     val datePublished: String = "Recently",
     val fileName: String = "",
     val downloadUrl: String = "",
-    val sizeBytes: Long = 0L
+    val sizeBytes: Long = 0L,
+    val sha256: String = "",
+    val signed: Boolean = true
 ) {
     val primaryMcVersion: String
         get() = mcVersions.firstOrNull() ?: "26.3"
@@ -55,9 +66,9 @@ data class StoreVersionRelease(
     val formattedDownloads: String
         get() = when {
             downloadsCount >= 1_000_000L -> String.format(java.util.Locale.US, "%.1fM", downloadsCount / 1_000_000.0)
-            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fK", downloadsCount / 1_000.0)
+            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fk", downloadsCount / 1_000.0)
             downloadsCount > 0L -> downloadsCount.toString()
-            else -> "12.4K"
+            else -> "1.2k"
         }
 }
 
@@ -74,16 +85,23 @@ data class StoreCatalogItem(
     val sizeBytes: Long,
     val sha256: String = "",
     val category: StoreCategory,
+    val kindBadge: String = "MOD",
     val pageUrl: String = "",
     val sourceCodeUrl: String = "",
     val iconUrl: String = "",
-    val downloadsCount: Long = 100_000L,
+    val downloadsCount: Long = 1200L,
+    val ratingScore: Float = 4.8f,
+    val ratingCount: Int = 12,
+    val isSignedOrOfficial: Boolean = true,
+    val side: String = "client",
+    val license: String = "MIT",
     val displayTags: List<String> = emptyList(),
-    val platform: StoreTargetPlatform = StoreTargetPlatform.MODRINTH
+    val requiredModIds: List<String> = emptyList(),
+    val allVersions: List<StoreVersionRelease> = emptyList()
 ) {
     val isCompatibleWith26_3: Boolean
         get() = supportedMcVersions.any {
-            it.contains("26.3") || it.contains("26.") || it.equals("all", ignoreCase = true)
+            it.contains("26.3") || it.equals("all", ignoreCase = true)
         }
 
     val versionBadge: String
@@ -91,10 +109,18 @@ data class StoreCatalogItem(
 
     val formattedDownloads: String
         get() = when {
-            downloadsCount >= 1_000_000L -> String.format(java.util.Locale.US, "%.0fM", downloadsCount / 1_000_000.0)
-            downloadsCount >= 100_000L -> String.format(java.util.Locale.US, "%.1fM", downloadsCount / 1_000_000.0)
-            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fK", downloadsCount / 1_000.0)
-            else -> downloadsCount.toString()
+            downloadsCount >= 1_000_000L -> String.format(java.util.Locale.US, "%.1fM downloads", downloadsCount / 1_000_000.0)
+            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fk downloads", downloadsCount / 1_000.0)
+            else -> "$downloadsCount downloads"
+        }
+
+    val targetInstallFolder: String
+        get() = when (category) {
+            StoreCategory.RESOURCE_PACK -> "resourcepacks"
+            StoreCategory.SHADER_PACK -> "shaderpacks"
+            StoreCategory.MODPACK -> "horizon-packs"
+            StoreCategory.NATIVE_MOD -> "horizon-native-mods"
+            else -> "horizon-mods"
         }
 }
 
