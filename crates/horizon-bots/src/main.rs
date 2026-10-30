@@ -182,11 +182,12 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unknown option {arg}; --help lists them")),
         }
     }
-    const BEHAVIOURS: [&str; 14] = [
+    const BEHAVIOURS: [&str; 15] = [
         "idle",
         "walk",
         "explore",
         "mixed",
+        "server",
         "flood-move",
         "flood-acks",
         "flood-packets",
@@ -200,7 +201,7 @@ fn options() -> Result<Options, String> {
     ];
     if !BEHAVIOURS.contains(&o.behaviour.as_str()) {
         return Err(format!(
-            "--behaviour {}: use idle, walk, explore, mixed or a flood behaviour (--help lists them)",
+            "--behaviour {}: use idle, walk, explore, mixed, server or a flood behaviour (--help lists them)",
             o.behaviour
         ));
     }
