@@ -217,6 +217,10 @@ struct Bot {
     teleport: Mutex<Option<[f64; 3]>>,
     error: Mutex<Option<String>>,
     joined_after_ms: AtomicU64,
+    /// When the bot asked to join, and how long after that it got the last
+    /// chunk new to it: for a bot that stands still, its first full view.
+    asked: Mutex<Option<Instant>>,
+    view_after_ms: AtomicU64,
     /// The bot stopped reading (--no-read).
     deaf: AtomicBool,
 }
@@ -515,6 +519,9 @@ fn read(
                 if let (Ok(x), Ok(z)) = (r.i32(), r.i32()) {
                     if !lock(&bot.held).insert((x, z)) {
                         bot.resent.fetch_add(1, Ordering::Relaxed);
+                    } else if let Some(asked) = *lock(&bot.asked) {
+                        bot.view_after_ms
+                            .store(asked.elapsed().as_millis() as u64, Ordering::Relaxed);
                     }
                     if seen.insert((x, z)) {
                         bot.unique.fetch_add(1, Ordering::Relaxed);
@@ -609,6 +616,7 @@ fn run_bot(
 ) {
     let name = format!("{}{index}", o.name);
     let asked = Instant::now();
+    *lock(&bot.asked) = Some(asked);
     let connection = match join(&o, &name) {
         Ok(c) => c,
         Err(e) => {
@@ -911,6 +919,9 @@ fn main() {
             "name": format!("{}{i}", o.name),
             "behaviour": behaviour_of(&o.behaviour, i).name(),
             "joined_after_ms": b.joined_after_ms.load(Ordering::SeqCst),
+            // Only an idle bot's last new chunk ends its first view.
+            "view_after_ms": (behaviour_of(&o.behaviour, i) == Behaviour::Idle)
+                .then(|| b.view_after_ms.load(Ordering::Relaxed)),
             "chunks": b.chunks.load(Ordering::Relaxed),
             "unique_chunks": b.unique.load(Ordering::Relaxed),
             "resent": b.resent.load(Ordering::Relaxed),
