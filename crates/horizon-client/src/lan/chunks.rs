@@ -28,6 +28,9 @@ use std::{
 const NON_AIR: u8 = 1;
 const FLUID: u8 = 2;
 const ENTITY: u8 = 4;
+/// Block.getFriction above stone's 0.6: the ices (up to blue ice's 0.989) and slime (0.8).
+const ICE: u8 = 8;
+const SLIME: u8 = 16;
 
 /// The vanilla block entity type of a block (BlockEntityType.validBlocks).
 pub fn block_entity_type(name: &str) -> Option<&'static str> {
@@ -429,6 +432,14 @@ impl ChunkEncoder {
             if t >= 0 {
                 f |= ENTITY;
             }
+            match &*name {
+                "minecraft:ice"
+                | "minecraft:packed_ice"
+                | "minecraft:frosted_ice"
+                | "minecraft:blue_ice" => f |= ICE,
+                "minecraft:slime_block" => f |= SLIME,
+                _ => {}
+            }
             flags.push(f);
             entity_types.push(t);
             block_ids.push(blocks.and_then(|b| b.id(&name)).unwrap_or(0));
@@ -564,6 +575,17 @@ impl ChunkEncoder {
             .get(state as usize)
             .filter(|t| **t >= 0)
             .map(|t| i32::from(*t))
+    }
+    /// `Block.getFriction`, at its largest for the ices (blue ice's).
+    pub fn friction(&self, state: u32) -> f64 {
+        let f = self.coder.flags.get(state as usize).copied().unwrap_or(0);
+        if f & ICE != 0 {
+            0.989
+        } else if f & SLIME != 0 {
+            0.8
+        } else {
+            0.6
+        }
     }
     /// Whether the state holds a fluid (water, lava, or a waterlogged block).
     pub fn has_fluid(&self, state: u32) -> bool {

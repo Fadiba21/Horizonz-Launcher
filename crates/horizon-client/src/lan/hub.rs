@@ -2583,6 +2583,8 @@ impl Hub {
         // A passenger only turns: its vehicle carries it (absSnapTo where it is).
         if g.vehicle.is_some() {
             (g.yaw, g.pitch) = (yaw, pitch);
+            // The anticheat's speed check starts again once off it.
+            g.anticheat.speed.reset();
             return;
         }
         let d = [0, 1, 2].map(|k| to[k] - g.first_good[k]);
@@ -2639,6 +2641,12 @@ impl Hub {
         }
         // The anticheat's `ground`: a claim of the ground with nothing to
         // stand on is dropped (no-fall, walking on water).
+        if self.anticheat.is_some() && self.anticheat_speed(i, start, to, ctx, events) == Some(true)
+        {
+            let g = &mut self.guests[i];
+            (g.yaw, g.pitch) = (yaw, pitch);
+            return;
+        }
         let mut flags = flags;
         if flags & 1 != 0 && self.anticheat.is_some() {
             match self.anticheat_ground(i, to, stands, ctx, events) {

@@ -75,6 +75,7 @@ horizon-bots: load-test bots for a Minecraft Java Edition 26.3 server (offline m
   --height H             blocks above spawn the bots fly at (walk, explore, idle); default 24
   --ground               claim the ground in every move (with --height 0 on a flat world: walking
                          on it; higher, or over water: a no-fall or jesus cheat, to test an anticheat)
+  --speed F              cheat, to test an anticheat: walk F times as fast as sprinting allows
   --timer F              cheat, to test an anticheat: tick F times as fast as vanilla's client (1.5: 30 Hz)
   --report FILE          a JSON summary at the end (- prints it after the per-second lines)
 ";
@@ -135,6 +136,8 @@ struct Options {
     no_read: bool,
     height: f64,
     ground: bool,
+    /// Walking speed against vanilla's sprint (a speed cheat above 1).
+    speed: f64,
     name: String,
     /// The `minecraft:brand` to send, if any.
     brand: Option<String>,
@@ -160,6 +163,7 @@ fn options() -> Result<Options, String> {
         no_read: false,
         height: 24.0,
         ground: false,
+        speed: 1.0,
         name: "Bot".into(),
         report: None,
         brand: None,
@@ -203,6 +207,7 @@ fn options() -> Result<Options, String> {
             "--report" => o.report = Some(value),
             "--brand" => o.brand = Some(value),
             "--height" => o.height = value.parse().map_err(|_| number("blocks"))?,
+            "--speed" => o.speed = value.parse().map_err(|_| number("a speed, like 1.5"))?,
             "--timer" => {
                 o.timer = value.parse().map_err(|_| number("a speed, like 1.5"))?;
                 if !(o.timer >= 0.1 && o.timer <= 20.0) {
@@ -740,6 +745,8 @@ fn run_bot(
     let cruise = spawn[1] + o.height;
     let heading = random.unit() * std::f64::consts::TAU;
     let mut target = pos;
+    // The last step, for vanilla's acceleration on the ground.
+    let mut last_step = 0.0_f64;
     let mut next = Instant::now();
     let (joined, mut tick) = (Instant::now(), 0u64);
     loop {
@@ -749,6 +756,7 @@ fn run_bot(
         // A teleport from the server wins over where the bot thought it was.
         if let Some(at) = lock(&bot.teleport).take() {
             pos = at;
+            last_step = 0.0;
         }
         let here = ((pos[0].floor() as i32) >> 4, (pos[2].floor() as i32) >> 4);
         // The abusive client doesn't wait for its chunk, as a real client must.
@@ -795,6 +803,7 @@ fn run_bot(
                     let (dx, dz) = (target[0] - pos[0], target[2] - pos[2]);
                     let distance = dx.hypot(dz);
                     if distance < 1.0 {
+                        last_step = 0.0;
                         let angle = random.unit() * std::f64::consts::TAU;
                         let reach = 8.0 + random.unit() * 40.0;
                         target = [
@@ -803,8 +812,14 @@ fn run_bot(
                             spawn[2] + angle.sin() * reach,
                         ];
                     } else {
-                        // Sprinting: 5.6 blocks a second.
-                        let step = 0.28_f64.min(distance);
+                        // Sprinting: 5.6 blocks a second. On the ground, from a stand as vanilla's
+                        // LivingEntity.travelInAir: a tick keeps 0.546 of the last and adds 0.13.
+                        let step = if o.ground {
+                            (last_step * 0.546 + 0.13 * o.speed).min(distance)
+                        } else {
+                            (0.28 * o.speed).min(distance)
+                        };
+                        last_step = step;
                         pos[0] += dx / distance * step;
                         pos[2] += dz / distance * step;
                     }

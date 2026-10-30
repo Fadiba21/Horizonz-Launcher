@@ -145,6 +145,8 @@ pub struct Guest {
     /// (receivedMovePacketCount, knownMovePacketCount).
     pub received_moves: i32,
     pub known_moves: i32,
+    /// The teleport id the anticheat's speed check last saw (a new one starts its count again).
+    pub anticheat_teleport: i32,
     /// The last accepted move left the player hovering over air
     /// (`clientIsFloating`), and the ticks it has (`aboveGroundTickCount`).
     pub client_is_floating: bool,
@@ -335,6 +337,7 @@ impl Guest {
             first_good: position,
             received_moves: 0,
             known_moves: 0,
+            anticheat_teleport: 0,
             client_is_floating: false,
             above_ground_ticks: 0,
             position_this_tick: false,
@@ -408,6 +411,15 @@ impl Guest {
     }
     pub fn send(&self, packet: &play::Clientbound) {
         self.sender.send(packet.encode());
+    }
+    /// ClientboundSetEntityMotionPacket about the player themselves (knockback): the anticheat allows
+    /// for the push.
+    pub fn send_own_motion(&self, velocity: [f64; 3]) {
+        self.anticheat.speed.pushed(velocity);
+        self.send(&play::Clientbound::SetEntityMotion(play::SetEntityMotion {
+            id: self.entity_id,
+            velocity,
+        }));
     }
     /// `Entity.stopRiding`: out of the vehicle it rode.
     pub fn stop_riding(&mut self) {

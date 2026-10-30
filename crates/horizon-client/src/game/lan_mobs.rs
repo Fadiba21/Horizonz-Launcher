@@ -9,7 +9,6 @@ use horizon_client::{
     projectiles::{Hit, Projectile},
 };
 use horizon_core::geometry::{Aabb, Vec3};
-use horizon_protocol::packets::play::{self, Clientbound as C};
 
 /// The guests mobs can see this tick, by connection.
 pub(super) type GuestViews = Vec<(u32, PlayerView)>;
@@ -328,10 +327,7 @@ impl Game<'_> {
     /// ClientboundSetEntityMotionPacket to a guest about themselves.
     pub(super) fn send_guest_motion(&self, host: &LanHost, conn: u32, velocity: Option<Vec3>) {
         if let (Some(v), Some(g)) = (velocity, host.hub.guest(conn)) {
-            g.send(&C::SetEntityMotion(play::SetEntityMotion {
-                id: g.entity_id,
-                velocity: [v.x, v.y, v.z],
-            }));
+            g.send_own_motion([v.x, v.y, v.z]);
         }
     }
 }

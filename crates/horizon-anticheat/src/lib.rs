@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod speed;
 pub mod timer;
 
 /// What one check's violation level leads to.
@@ -131,6 +132,14 @@ checks! {
     /// the ground to skip fall damage) and walking on water. The claim is always dropped, so vanilla's
     /// fall damage follows; from `setback` on the player is also sent back.
     ground: Ground => GroundConfig [5.0, 15.0, 60.0, 2.0] {}
+
+    /// Speed: a move that goes farther sideways than vanilla's movement allows after the one before
+    /// (`speed.rs`): faster than sprinting, sprint-jumping or ice allow, with the server's own pushes
+    /// added. Not judged in water and lava, gliding, with Riptide, or in creative.
+    speed: Speed => SpeedConfig [5.0, 15.0, 60.0, 2.0] {
+        /// Blocks a move may go beyond the limit before it is flagged.
+        tolerance: f64 = 0.05,
+    }
 }
 
 /// How many checks there are.
@@ -198,6 +207,9 @@ pub struct Player {
     pub timer: timer::Balance,
     /// The server tick and height where the ground last held the player.
     pub ground: Option<(u64, f64)>,
+    pub speed: speed::Tracker,
+    /// Client ticks ended since the last move (ServerboundClientTickEndPacket).
+    pub ticks_since_move: u32,
 }
 
 impl Player {

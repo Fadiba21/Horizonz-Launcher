@@ -15,6 +15,9 @@ Checks:
          hovering 24 blocks up that claims the ground in every move (no-fall) and one standing on water
          that does (jesus) are flagged, their claim dropped, and kicked; bots walking on the ground and
          standing still are never flagged.
+- speed: `[anticheat]` on, survival: a bot walking on the ground 1.5 times as fast as sprinting allows is
+         flagged, sent back and kicked; bots walking with vanilla's acceleration never are (nor by any
+         other check).
 
 Each server runs in a fresh folder with fresh HORIZON_HOME and XDG folders (lab.game_env), on a free port,
 in a flat world (creative unless the check says otherwise: the bots fly). Build first:
@@ -172,7 +175,34 @@ def check_ground(bins, scratch, out, seconds):
     print(f'ground: the no-fall and jesus bots are flagged and kicked; {walkers} bots on the ground never flagged')
 
 
-CHECKS = {'off': check_off, 'timer': check_timer, 'ground': check_ground}
+def check_speed(bins, scratch, out, seconds):
+    folder = scratch / 'speed'
+    server, port = start(bins, folder, ON, out, 'speed', **{'gamemode': 'survival', 'allow-flight': 'true'})
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            legit = pool.submit(bots, bins, port, out, 'Legit', 5, 'walk', seconds, '--height', '0', '--ground')
+            cheat = pool.submit(bots, bins, port, out, 'Fast', 1, 'walk', seconds, '--height', '0', '--ground',
+                                '--speed', '1.5')
+            legit, cheat = legit.result(), cheat.result()
+    finally:
+        server.stop()
+    log = folder / 'logs/anticheat.log'
+    log = log.read_text() if log.exists() else ''
+    for bot in legit['per_bot']:
+        if bot['name'] in log:
+            raise Failed(f'speed: legit {bot["name"]} was flagged:\n{log}')
+        if bot['error']:
+            raise Failed(f'speed: legit {bot["name"]} was dropped: {bot["error"]}')
+    cheater = cheat['per_bot'][0]
+    flags = log.count(f'{cheater["name"]} failed speed')
+    if flags < 3 or cheater['pulled_back'] == 0:
+        raise Failed(f'speed: the 1.5x bot was flagged {flags} times, sent back {cheater["pulled_back"]}:\n{log}')
+    if 'disconnected' not in (cheater['error'] or ''):
+        raise Failed(f'speed: the 1.5x bot was not kicked ({cheater["error"]})')
+    print(f'speed: the 1.5x bot flagged {flags} times, sent back and kicked; {legit["joined"]} legit walkers never flagged')
+
+
+CHECKS = {'off': check_off, 'timer': check_timer, 'ground': check_ground, 'speed': check_speed}
 
 
 def main():

@@ -567,6 +567,7 @@ impl Game<'_> {
             }
             match pushed.iter().find(|(conn, _)| *conn == g.conn) {
                 Some((_, push)) => {
+                    g.anticheat.speed.pushed(*push);
                     packet.knockback = Some(*push);
                     g.send(&C::Explode(packet.clone()));
                 }

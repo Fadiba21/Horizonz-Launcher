@@ -109,6 +109,8 @@ impl Hub {
         let Some(ac) = self.anticheat.as_deref() else {
             return;
         };
+        let g = &mut self.guests[i].anticheat;
+        g.ticks_since_move = g.ticks_since_move.saturating_add(1);
         if !ac.config.runs(Check::Timer) {
             return;
         }
@@ -122,6 +124,88 @@ impl Hub {
                 events,
             );
         }
+    }
+
+    /// `speed`, for a move of guest `i` from `from` to `to`: None when it is within what vanilla's movement
+    /// allows (or isn't judged), else whether the player was sent back.
+    pub(super) fn anticheat_speed(
+        &mut self,
+        i: usize,
+        from: [f64; 3],
+        to: [f64; 3],
+        ctx: &TickCtx,
+        events: &mut Vec<HostEvent>,
+    ) -> Option<bool> {
+        let tolerance = {
+            let ac = self.anticheat.as_deref()?;
+            if !ac.config.runs(Check::Speed) {
+                return None;
+            }
+            ac.config.speed.tolerance
+        };
+        let ticks = std::mem::take(&mut self.guests[i].anticheat.ticks_since_move);
+        let g = &self.guests[i];
+        let teleported = g.teleport_counter != g.anticheat_teleport;
+        // Gliding, Riptide, creative flight, and water or lava (currents, Depth Strider, Dolphin's Grace)
+        // move by rules of their own: the next move starts again.
+        let skipped = teleported
+            || g.creative()
+            || g.spectator()
+            || g.fall_flying
+            || g.motion
+                .as_ref()
+                .is_some_and(|m| m.auto_spin_attack_ticks > 0)
+            || self.near_fluid(i, to, ctx);
+        let speed = (!skipped)
+            .then(|| {
+                self.guests[i]
+                    .motion
+                    .as_mut()
+                    .map(|m| m.attribute("minecraft:movement_speed"))
+            })
+            .flatten()
+            .and_then(Result::ok);
+        let g = &mut self.guests[i];
+        g.anticheat_teleport = g.teleport_counter;
+        let Some(speed) = speed else {
+            g.anticheat.speed.reset();
+            return None;
+        };
+        // getBlockPosBelowThatAffectsMyMovement: half a block under the feet.
+        let below = ctx.world.block(
+            from[0].floor() as i32,
+            (from[1] - 0.500001).floor() as i32,
+            from[2].floor() as i32,
+        );
+        let m = horizon_anticheat::speed::Move {
+            distance: (to[0] - from[0]).hypot(to[2] - from[2]),
+            ticks,
+            on_ground: g.on_ground,
+            friction: self.encoder.friction(below.0),
+            speed,
+            rising: to[1] > from[1],
+        };
+        let excess = self.guests[i].anticheat.speed.check(m, tolerance)?;
+        let detail = format!(
+            "{:.3} blocks in {} tick(s), {excess:.3} too far",
+            m.distance,
+            ticks.max(1)
+        );
+        Some(self.flag(i, Check::Speed, 1.0, &detail, events))
+    }
+
+    /// Whether any block around guest `i`'s body at `at` holds a fluid.
+    fn near_fluid(&self, i: usize, at: [f64; 3], ctx: &TickCtx) -> bool {
+        let d = self.guests[i].dimensions();
+        let half = f64::from(d.width) / 2.0 + 0.1;
+        let lo = [at[0] - half, at[1] - 0.1, at[2] - half].map(|v| v.floor() as i32);
+        let hi =
+            [at[0] + half, at[1] + f64::from(d.height), at[2] + half].map(|v| v.floor() as i32);
+        (lo[0]..=hi[0]).any(|x| {
+            (lo[2]..=hi[2]).any(|z| {
+                (lo[1]..=hi[1]).any(|y| self.encoder.has_fluid(ctx.world.block(x, y, z).0))
+            })
+        })
     }
 
     /// `ground`, for a move from guest `i` that says it ends on the ground at `to` (`stands`: the move
