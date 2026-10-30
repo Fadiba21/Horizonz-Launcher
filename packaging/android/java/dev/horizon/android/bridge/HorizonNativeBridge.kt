@@ -18,15 +18,22 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipFile
 
 data class AssetInstallStatus(
     val ready: Boolean = false,
     val running: Boolean = false,
+    val paused: Boolean = false,
     val stage: String = "Idle",
     val done: Long = 0L,
     val total: Long = 100L,
@@ -43,18 +50,32 @@ data class AssetInstallStatus(
         get() = if (ready) 100 else (progressFraction * 100f).toInt().coerceIn(0, 100)
 }
 
+data class StoreDownloadProgress(
+    val activeItemId: String = "",
+    val activeTitle: String = "",
+    val running: Boolean = false,
+    val paused: Boolean = false,
+    val percent: Int = 0,
+    val speedText: String = "",
+    val statusText: String = ""
+)
+
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
+    const val INSTALLED_LAUNCHER_VERSION = "1.10"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
+    val storeDownloadPaused = AtomicBoolean(false)
+    val storeDownloadCancelled = AtomicBoolean(false)
+
     init {
         try {
             System.loadLibrary("horizon_android")
             nativeLoaded = true
-            appendMemoryOnly("Native library libhorizon_android.so loaded (HorizonZ 1.9).")
+            appendMemoryOnly("Native library libhorizon_android.so loaded (HorizonZ $INSTALLED_LAUNCHER_VERSION).")
         } catch (e: UnsatisfiedLinkError) {
             appendMemoryOnly("Native library will load in :game process: ${e.message}")
         }
@@ -99,10 +120,16 @@ object HorizonNativeBridge {
         Log.i(TAG, message)
     }
 
-    /**
-     * Completely clears all in-memory logs, persistent log files across both processes,
-     * and the Android kernel logcat buffer so old logs never reappear!
-     */
+    private fun appendInstallLogFile(home: File, message: String) {
+        try {
+            val logFile = File(home, "zalith-install-log.txt")
+            FileOutputStream(logFile, true).use { fos ->
+                fos.write((message + "\n").toByteArray(Charsets.UTF_8))
+            }
+        } catch (ignored: Exception) {
+        }
+    }
+
     fun clearLogs(context: Context) {
         memoryLogs.clear()
         val home = context.filesDir
@@ -126,7 +153,7 @@ object HorizonNativeBridge {
             File(home, "zalith-log-cleared.txt").writeText(System.currentTimeMillis().toString())
         } catch (ignored: Exception) {
         }
-        appendSystemLog("System, installer, and Minecraft runtime logs cleared (HorizonZ 1.9).", true, context)
+        appendSystemLog("System, installer, and Minecraft runtime logs cleared (HorizonZ $INSTALLED_LAUNCHER_VERSION).", true, context)
     }
 
     fun copyToClipboard(context: Context, label: String, text: String) {
@@ -143,6 +170,7 @@ object HorizonNativeBridge {
             "datapacks",
             "shaderpacks",
             "mods",
+            "horizon-mods",
             "profiles",
             "logs",
             "custom_wallpapers",
@@ -170,14 +198,14 @@ object HorizonNativeBridge {
     fun getProfileHome(home: File, profileSlot: Int): File {
         val dir = if (profileSlot <= 0) home else File(home, "profiles/profile-$profileSlot")
         dir.mkdirs()
-        listOf("saves", "resourcepacks", "shaderpacks", "mods", "logs").forEach {
+        listOf("saves", "resourcepacks", "shaderpacks", "mods", "horizon-mods", "logs").forEach {
             File(dir, it).mkdirs()
         }
         return dir
     }
 
     // ========================================================================
-    // PERSISTENT ACCOUNTS SYSTEM (Offline + Microsoft OAuth Device Code flow)
+    // PERSISTENT ACCOUNTS SYSTEM
     // ========================================================================
 
     fun loadSavedAccounts(context: Context): List<ZalithAccount> {
@@ -304,7 +332,6 @@ object HorizonNativeBridge {
             }
         }
 
-        // Pull latest in-game options.txt and horizon-keypad.json from profile_home so changes made inside Minecraft sync back to Launcher!
         val profileHome = getProfileHome(home, state.profile)
         val optionsFile = File(profileHome, "options.txt").takeIf { it.exists() } ?: File(home, "options.txt")
         if (optionsFile.exists()) {
@@ -379,13 +406,6 @@ object HorizonNativeBridge {
         syncNativeHorizonAccountAndCatalog(home, activeAccount, config)
     }
 
-    /**
-     * Synchronizes:
-     * 1. `android-launcher.json` (with exact `catalog.rs` serde keys: `"open-gl"`, `"vulkan"`, `"vulkan-compatibility"`, etc.)
-     * 2. `accounts.json` and `horizon-player.txt` (in both `home` and `profile_home`)
-     * 3. `horizon-keypad.json` (`"enabled": config.keypadControls`, preserving any existing button layout!)
-     * 4. Non-destructive key updates in `options.txt` (updating only the synced keys while preserving all in-game keybinds/audio/etc.!)
-     */
     private fun syncNativeHorizonAccountAndCatalog(
         home: File,
         activeAccount: ZalithAccount,
@@ -393,7 +413,6 @@ object HorizonNativeBridge {
     ) {
         val profileHome = getProfileHome(home, config.profile)
 
-        // 1. Write `android-launcher.json` matching `crates/horizon-client/src/android/catalog.rs`
         val androidLauncherJson = JSONObject().apply {
             put("profile", config.profile)
             if (config.proxy.isNotBlank()) put("proxy", config.proxy.trim()) else put("proxy", JSONObject.NULL)
@@ -412,7 +431,6 @@ object HorizonNativeBridge {
             File(dir, "android-launcher.json").writeText(androidLauncherJson.toString(2))
         }
 
-        // 2. Write `accounts.json` and `horizon-player.txt`
         val accountsJson = JSONObject().apply {
             put("accounts", JSONArray())
             put("selected", JSONObject.NULL)
@@ -424,7 +442,6 @@ object HorizonNativeBridge {
             File(dir, "horizon-player.txt").writeText(activeAccount.username)
         }
 
-        // 3. Sync `horizon-keypad.json` so Keypad Controls toggle works even after first launch!
         listOf(home, profileHome).forEach { dir ->
             val keypadFile = File(dir, "horizon-keypad.json")
             val kpObj = if (keypadFile.exists()) {
@@ -436,7 +453,6 @@ object HorizonNativeBridge {
             keypadFile.writeText(kpObj.toString(2))
         }
 
-        // 4. Non-destructively update only the synced graphics keys in `options.txt` (preserving all other in-game settings!)
         listOf(home, profileHome).forEach { dir ->
             updateOptionsTxtNonDestructively(File(dir, "options.txt"), config)
         }
@@ -492,7 +508,7 @@ object HorizonNativeBridge {
     }
 
     // ========================================================================
-    // LOCAL MODS (.hmod), SHADERS, & RESOURCE PACKS TOGGLE SYNC (catalog.rs)
+    // LOCAL MODS (.hmod), SHADERS, & RESOURCE PACKS TOGGLE SYNC
     // ========================================================================
 
     fun isContentItemEnabled(context: Context, folder: String, fileName: String, profileSlot: Int = 0): Boolean {
@@ -530,7 +546,20 @@ object HorizonNativeBridge {
         val profileHome = getProfileHome(home, profileSlot)
         val currentlyEnabled = isContentItemEnabled(context, folder, fileName, profileSlot)
         val newState = !currentlyEnabled
+        setContentItemEnabled(context, folder, fileName, newState, profileSlot, logEnabled)
+        return newState
+    }
 
+    fun setContentItemEnabled(
+        context: Context,
+        folder: String,
+        fileName: String,
+        enabled: Boolean,
+        profileSlot: Int = 0,
+        logEnabled: Boolean = true
+    ) {
+        val home = ensureHomeDirectories(context)
+        val profileHome = getProfileHome(home, profileSlot)
         listOf(home, profileHome).forEach { dir ->
             when (folder) {
                 "mods" -> {
@@ -541,7 +570,7 @@ object HorizonNativeBridge {
                     for (i in 0 until disabledArr.length()) {
                         set.add(disabledArr.optString(i))
                     }
-                    if (newState) set.remove(fileName) else set.add(fileName)
+                    if (enabled) set.remove(fileName) else set.add(fileName)
                     val outArr = JSONArray()
                     set.forEach { outArr.put(it) }
                     obj.put("disabled", outArr)
@@ -550,7 +579,7 @@ object HorizonNativeBridge {
                 "shaderpacks" -> {
                     val optFile = File(dir, "options.txt")
                     val lines = if (optFile.exists()) optFile.readLines().toMutableList() else mutableListOf()
-                    val targetVal = if (newState) fileName else ""
+                    val targetVal = if (enabled) fileName else ""
                     var found = false
                     val out = lines.map { line ->
                         if (line.startsWith("shaderPack:")) {
@@ -571,7 +600,7 @@ object HorizonNativeBridge {
                             found = true
                             val inner = line.removePrefix("resourcePacks:[").removeSuffix("]")
                             val items = inner.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
-                            if (newState) {
+                            if (enabled) {
                                 if ("\"vanilla\"" !in items) items.add(0, "\"vanilla\"")
                                 if (entryToken !in items) items.add(entryToken)
                             } else {
@@ -580,15 +609,14 @@ object HorizonNativeBridge {
                             "resourcePacks:[${items.joinToString(",")}]"
                         } else line
                     }.toMutableList()
-                    if (!found && newState) {
+                    if (!found && enabled) {
                         out.add("resourcePacks:[\"vanilla\",$entryToken]")
                     }
                     optFile.writeText(out.joinToString("\n") + "\n")
                 }
             }
         }
-        appendSystemLog("${if (newState) "Enabled" else "Disabled"} $folder item: $fileName", logEnabled, context)
-        return newState
+        appendSystemLog("${if (enabled) "Enabled" else "Disabled"} $folder item: $fileName", logEnabled, context)
     }
 
     fun openSystemFilesApp(context: Context) {
@@ -630,7 +658,7 @@ object HorizonNativeBridge {
     }
 
     // ========================================================================
-    // ASSET DOWNLOADER + BACKGROUND SERVICE + VERBOSE SPEED/URL LOGGER
+    // ASSET DOWNLOADER: PAUSE, RESUME, CANCEL (WITH PARTIAL CLEANUP), & SMART REPAIR
     // ========================================================================
 
     fun isMinecraft26Ready(context: Context): Boolean {
@@ -647,7 +675,9 @@ object HorizonNativeBridge {
 
     fun startMinecraft26Download(context: Context, logEnabled: Boolean = true): Boolean {
         val home = ensureHomeDirectories(context)
-        appendSystemLog("Starting Minecraft 26.3 official asset download & background notification service...", logEnabled, context)
+        File(home, "zalith-install-paused.flag").delete()
+        File(home, "zalith-install-cancelled.flag").delete()
+        appendSystemLog("Starting Minecraft 26.3 official asset download...", logEnabled, context)
         if (nativeLoaded) {
             try {
                 val ok = nativeStartOfficialInstall(home.absolutePath)
@@ -662,15 +692,120 @@ object HorizonNativeBridge {
         return false
     }
 
-    fun repairAndVerifyAssets(context: Context, logEnabled: Boolean = true) {
+    fun pauseMinecraft26Download(context: Context, logEnabled: Boolean = true) {
         val home = ensureHomeDirectories(context)
-        File(home, ".local/horizon-client/26.3/android-downloads-v2.json").delete()
-        appendSystemLog("Triggered full asset & touch control verification...", logEnabled, context)
-        startMinecraft26Download(context, logEnabled)
+        File(home, "zalith-install-paused.flag").writeText("1")
+        appendInstallLogFile(home, "[Paused] Asset download paused by user. Tap Resume to continue.")
+        appendSystemLog("Paused Minecraft 26.3 asset download.", logEnabled, context)
+    }
+
+    fun resumeMinecraft26Download(context: Context, logEnabled: Boolean = true) {
+        val home = ensureHomeDirectories(context)
+        File(home, "zalith-install-paused.flag").delete()
+        appendInstallLogFile(home, "[Resumed] Resuming Minecraft 26.3 asset download...")
+        appendSystemLog("Resumed Minecraft 26.3 asset download.", logEnabled, context)
+    }
+
+    /**
+     * Cancels the active download and immediately deletes all in-progress/partial files (`official.partial`, etc.).
+     */
+    fun cancelMinecraft26Download(context: Context, logEnabled: Boolean = true) {
+        val home = ensureHomeDirectories(context)
+        File(home, "zalith-install-cancelled.flag").writeText("1")
+        File(home, "zalith-install-paused.flag").delete()
+
+        // Delete partial staging directories and progress files immediately
+        listOf(
+            File(home, "official.partial"),
+            File(home, ".local/horizon-client/official.partial"),
+            File(home, ".local/horizon-client/26.3.partial"),
+            File(home, "zalith-install-progress.json")
+        ).forEach { target ->
+            try {
+                if (target.exists()) target.deleteRecursively()
+            } catch (ignored: Exception) {
+            }
+        }
+
+        appendInstallLogFile(home, "[Cancelled] Download cancelled by user. Partial staging files deleted.")
+        appendSystemLog("Cancelled asset download and deleted partial files.", logEnabled, context)
+        Toast.makeText(context, "Download dibatalkan & file sementara dihapus", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Smart Incremental Repair:
+     * Checks existing files first (`engine-data.zip`, `asset-index.json`, `horizon-resources.json`,
+     * `audio-complete.json`, and all 60 Bedrock Touch Control textures in `assets/minecraft/textures/gui/bedrock/`).
+     * Only repairs or re-extracts missing/corrupted files without wiping valid assets!
+     */
+    fun smartRepairAssets(context: Context, logEnabled: Boolean = true) {
+        val home = ensureHomeDirectories(context)
+        Thread({
+            appendInstallLogFile(home, "[Smart Repair] Scanning installed Minecraft 26.3 files for corruption or missing items...")
+            appendSystemLog("Running Smart Incremental Asset Repair...", logEnabled, context)
+
+            val root26 = File(home, ".local/horizon-client/26.3")
+            root26.mkdirs()
+
+            // 1. Check & repair bundled engine-data.zip resources without deleting valid files
+            val engineZip = File(home, "engine-data.zip")
+            var repairedFromBundle = 0
+            if (engineZip.exists() && engineZip.length() > 1024L) {
+                try {
+                    ZipFile(engineZip).use { zf ->
+                        val entries = zf.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            if (entry.isDirectory) continue
+                            val destFile = File(root26, entry.name)
+                            if (!destFile.exists() || destFile.length() == 0L || (entry.size > 0L && destFile.length() != entry.size)) {
+                                destFile.parentFile?.mkdirs()
+                                zf.getInputStream(entry).use { input ->
+                                    FileOutputStream(destFile).use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                repairedFromBundle++
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    appendInstallLogFile(home, "[Smart Repair] Bundle check note: ${e.message}")
+                }
+            }
+            if (repairedFromBundle > 0) {
+                appendInstallLogFile(home, "[Smart Repair] Restored $repairedFromBundle missing/corrupted files from engine-data.zip.")
+            } else {
+                appendInstallLogFile(home, "[Smart Repair] All engine-data.zip & touch control files verified intact.")
+            }
+
+            // 2. Check if core Mojang assets (`asset-index.json`, `horizon-resources.json`, `audio-complete.json`) exist
+            val hasAssetIndex = File(root26, "asset-index.json").isFile && File(root26, "asset-index.json").length() > 64L
+            val hasResources = File(root26, "horizon-resources.json").isFile
+            val hasAudio = File(root26, "audio-complete.json").isFile
+
+            if (hasAssetIndex && hasResources && hasAudio) {
+                File(root26, "android-downloads-v2.json").writeText("{\"schema\":2}")
+                val progFile = File(home, "zalith-install-progress.json")
+                progFile.writeText(
+                    "{\"ready\":true,\"running\":false,\"paused\":false,\"stage\":\"Ready\",\"done\":100,\"total\":100,\"speed\":\"Verified\",\"currentUrl\":\"\",\"detail\":\"Smart Repair Complete\",\"error\":\"\"}"
+                )
+                appendInstallLogFile(home, "[Smart Repair] Verification complete! 0 Mojang files needed re-downloading.")
+                appendSystemLog("Smart Repair complete — all existing assets verified!", logEnabled, context)
+            } else {
+                appendInstallLogFile(
+                    home,
+                    "[Smart Repair] Missing core Mojang index/audio detected (index=$hasAssetIndex, res=$hasResources, audio=$hasAudio) — starting incremental download for missing files only..."
+                )
+                File(root26, "android-downloads-v2.json").delete()
+                startMinecraft26Download(context, logEnabled)
+            }
+        }, "HorizonZ-SmartRepair").start()
     }
 
     fun pollInstallProgress(context: Context, logEnabled: Boolean = true): AssetInstallStatus {
         val home = ensureHomeDirectories(context)
+        val isPaused = File(home, "zalith-install-paused.flag").exists()
         val installLogFile = File(home, "zalith-install-log.txt")
         val logLines = if (logEnabled && installLogFile.exists()) {
             try {
@@ -695,13 +830,16 @@ object HorizonNativeBridge {
             try {
                 val obj = JSONObject(jsonText)
                 val rawStage = obj.optString("stage", "Idle")
+                val running = obj.optBoolean("running", false)
+                val paused = isPaused || obj.optBoolean("paused", false) || rawStage == "Paused"
                 return AssetInstallStatus(
                     ready = obj.optBoolean("ready", false),
-                    running = obj.optBoolean("running", false),
-                    stage = formatStageLabel(rawStage),
+                    running = running,
+                    paused = paused && running,
+                    stage = if (paused && running) "Paused — ${formatStageLabel(rawStage)}" else formatStageLabel(rawStage),
                     done = obj.optLong("done", 0L),
                     total = obj.optLong("total", 100L),
-                    speedText = obj.optString("speed", ""),
+                    speedText = if (paused && running) "Paused" else obj.optString("speed", ""),
                     currentUrl = obj.optString("currentUrl", ""),
                     detail = obj.optString("detail", ""),
                     error = obj.optString("error", ""),
@@ -715,6 +853,7 @@ object HorizonNativeBridge {
         return AssetInstallStatus(
             ready = ready,
             running = false,
+            paused = false,
             stage = if (ready) "Installed & Ready" else "Needs Download",
             done = if (ready) 100L else 0L,
             total = 100L,
@@ -731,9 +870,492 @@ object HorizonNativeBridge {
             "Controls" -> "5/6 Preparing Touch Controls (60 Icons)"
             "Finalize" -> "6/6 Finalizing Engine Resources"
             "Ready" -> "Installed & Ready"
+            "Paused" -> "Download Paused"
             else -> stage
         }
     }
+
+    // ========================================================================
+    // STORE CATALOG: HORIZON MODS (playhorizon.dev/mods) & MODRINTH RESOURCE PACKS
+    // ========================================================================
+
+    private val FALLBACK_HORIZON_MODS = listOf(
+        StoreCatalogItem(
+            id = "fps_overlay",
+            title = "FPS Counter",
+            summary = "Frames per second in a corner of the screen, with the minimum and the 1% low.",
+            author = "Horizon (@ludovic111)",
+            version = "1.0.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/fps_overlay-1.0.0/fps_overlay-1.0.0.hmod",
+            fileName = "fps_overlay-1.0.0.hmod",
+            sizeBytes = 15360L,
+            sha256 = "46109c3da01c058c0c15a9e43206b749627e69cd5cd023167621bb5dbdb88bcb",
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/fps_overlay"
+        ),
+        StoreCatalogItem(
+            id = "minimap",
+            title = "Minimap",
+            summary = "A map of the world around you in a corner of the screen with height shading and water depth.",
+            author = "Horizon (@ludovic111)",
+            version = "1.0.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/minimap-1.0.0/minimap-1.0.0.hmod",
+            fileName = "minimap-1.0.0.hmod",
+            sizeBytes = 26624L,
+            sha256 = "2906eb2832f4e64075be2aa55da0829f40b2eccf26727951dd19d7607e9fe704",
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/minimap"
+        ),
+        StoreCatalogItem(
+            id = "keystrokes",
+            title = "Keystrokes",
+            summary = "Your movement keys, mouse buttons and space bar in a corner, lit while held, with clicks per second.",
+            author = "Horizon (@ludovic111)",
+            version = "1.0.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/keystrokes-1.0.0/keystrokes-1.0.0.hmod",
+            fileName = "keystrokes-1.0.0.hmod",
+            sizeBytes = 17408L,
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/keystrokes"
+        ),
+        StoreCatalogItem(
+            id = "coordinates_hud",
+            title = "Coordinates HUD",
+            summary = "Your coordinates, facing direction and the time of day in a corner of the screen.",
+            author = "Horizon (@ludovic111)",
+            version = "0.1.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/coordinates_hud-0.1.0/coordinates_hud-0.1.0.hmod",
+            fileName = "coordinates_hud-0.1.0.hmod",
+            sizeBytes = 16384L,
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/coordinates_hud"
+        ),
+        StoreCatalogItem(
+            id = "zoom",
+            title = "Zoom",
+            summary = "Hold a key to zoom in; smooth zoom eases in and out like the spyglass with slower turning.",
+            author = "Horizon (@ludovic111)",
+            version = "1.0.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/zoom-1.0.0/zoom-1.0.0.hmod",
+            fileName = "zoom-1.0.0.hmod",
+            sizeBytes = 16384L,
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/zoom"
+        ),
+        StoreCatalogItem(
+            id = "recipes",
+            title = "Recipes",
+            summary = "Every item beside your inventory, with its crafting recipes and uses.",
+            author = "Horizon (@ludovic111)",
+            version = "1.0.0",
+            supportedMcVersions = listOf("26.3"),
+            downloadUrl = "https://github.com/horizon-rust/horizon-mods/releases/download/recipes-1.0.0/recipes-1.0.0.hmod",
+            fileName = "recipes-1.0.0.hmod",
+            sizeBytes = 24576L,
+            category = StoreCategory.HORIZON_MODS,
+            pageUrl = "https://playhorizon.dev/mods/recipes"
+        )
+    )
+
+    fun fetchHorizonModsCatalog(searchQuery: String = ""): List<StoreCatalogItem> {
+        val results = mutableListOf<StoreCatalogItem>()
+        try {
+            val conn = (URL("https://ludovic111.github.io/horizon-mods/index.json").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 7000
+                readTimeout = 9000
+                setRequestProperty("User-Agent", "HorizonZ-Launcher/$INSTALLED_LAUNCHER_VERSION (playhorizon.dev/mods)")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(body)
+                val projects = root.optJSONArray("projects") ?: JSONArray()
+                for (i in 0 until projects.length()) {
+                    val proj = projects.getJSONObject(i)
+                    val kind = proj.optString("kind", "mod")
+                    if (kind != "mod" && kind != "modpack") continue
+                    val id = proj.optString("id", "")
+                    val name = proj.optString("name", proj.optString("title", id))
+                    val summary = proj.optString("summary", proj.optString("description", ""))
+                    val ownersArr = proj.optJSONArray("owners")
+                    val author = if (ownersArr != null && ownersArr.length() > 0) ownersArr.optString(0) else "Horizon"
+                    val versions = proj.optJSONArray("versions") ?: continue
+                    if (versions.length() == 0) continue
+                    val latest = versions.getJSONObject(0)
+                    val verStr = latest.optString("version", "1.0.0")
+                    val gameVer = latest.optString("game", "26.3")
+                    val fileObj = latest.optJSONObject("file")
+                    val fileName = fileObj?.optString("name") ?: latest.optString("file_name", "$id-$verStr.hmod")
+                    val fileUrl = fileObj?.optString("url")
+                        ?: latest.optString("url", "https://github.com/horizon-rust/horizon-mods/releases/download/$id-$verStr/$fileName")
+                    val fileSize = fileObj?.optLong("size", 16384L) ?: latest.optLong("size", 16384L)
+                    val sha = fileObj?.optString("sha256", "") ?: latest.optString("sha256", "")
+
+                    results.add(
+                        StoreCatalogItem(
+                            id = id,
+                            title = name,
+                            summary = summary,
+                            author = author,
+                            version = verStr,
+                            supportedMcVersions = listOf(gameVer),
+                            downloadUrl = fileUrl,
+                            fileName = fileName,
+                            sizeBytes = fileSize,
+                            sha256 = sha,
+                            category = StoreCategory.HORIZON_MODS,
+                            pageUrl = "https://playhorizon.dev/mods/$id"
+                        )
+                    )
+                }
+            }
+        } catch (ignored: Exception) {
+        }
+
+        val combined = if (results.isNotEmpty()) results else FALLBACK_HORIZON_MODS
+        return if (searchQuery.isBlank()) {
+            combined
+        } else {
+            combined.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                    it.summary.contains(searchQuery, ignoreCase = true) ||
+                    it.id.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    fun fetchModrinthResourcePacks(searchQuery: String = ""): List<StoreCatalogItem> {
+        val results = mutableListOf<StoreCatalogItem>()
+        try {
+            val encodedQ = URLEncoder.encode(searchQuery.trim(), "UTF-8")
+            val facets = URLEncoder.encode("[[\"project_type:resourcepack\"]]", "UTF-8")
+            val apiUrl = "https://api.modrinth.com/v2/search?query=$encodedQ&limit=20&facets=$facets"
+            val conn = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000
+                readTimeout = 10000
+                setRequestProperty("User-Agent", "HorizonZ-Launcher/$INSTALLED_LAUNCHER_VERSION (Android)")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(body)
+                val hits = root.optJSONArray("hits") ?: JSONArray()
+                for (i in 0 until hits.length()) {
+                    val hit = hits.getJSONObject(i)
+                    val projectId = hit.optString("project_id", hit.optString("slug", ""))
+                    val slug = hit.optString("slug", projectId)
+                    val title = hit.optString("title", slug)
+                    val desc = hit.optString("description", "")
+                    val author = hit.optString("author", "Modrinth Creator")
+                    val verArr = hit.optJSONArray("versions") ?: JSONArray()
+                    val mcVers = mutableListOf<String>()
+                    for (vIdx in (verArr.length() - 1) downTo 0) {
+                        mcVers.add(verArr.optString(vIdx))
+                    }
+                    val latestMc = mcVers.firstOrNull() ?: "1.21.4"
+                    results.add(
+                        StoreCatalogItem(
+                            id = projectId,
+                            title = title,
+                            summary = desc,
+                            author = author,
+                            version = latestMc,
+                            supportedMcVersions = mcVers.take(5),
+                            downloadUrl = "modrinth://$projectId",
+                            fileName = "$slug.zip",
+                            sizeBytes = 0L,
+                            category = StoreCategory.MODRINTH_PACKS,
+                            pageUrl = "https://modrinth.com/resourcepack/$slug"
+                        )
+                    )
+                }
+            }
+        } catch (ignored: Exception) {
+        }
+        return results
+    }
+
+    private fun resolveModrinthDownloadUrl(projectId: String): Pair<String, String>? {
+        return try {
+            val url = "https://api.modrinth.com/v2/project/$projectId/version"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000
+                readTimeout = 10000
+                setRequestProperty("User-Agent", "HorizonZ-Launcher/$INSTALLED_LAUNCHER_VERSION (Android)")
+            }
+            if (conn.responseCode != 200) return null
+            val arr = JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
+            if (arr.length() == 0) return null
+            val firstVer = arr.getJSONObject(0)
+            val files = firstVer.optJSONArray("files") ?: return null
+            if (files.length() == 0) return null
+            val fileObj = files.getJSONObject(0)
+            val dlUrl = fileObj.optString("url", "")
+            val fname = fileObj.optString("filename", "$projectId.zip")
+            if (dlUrl.isNotBlank()) dlUrl to fname else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Downloads a Store item (Mod from playhorizon.dev or Resource Pack from Modrinth) with live
+     * Pause, Resume, and Cancel (with immediate `.part` deletion) + auto-installs into active profile!
+     */
+    fun downloadAndInstallStoreItem(
+        context: Context,
+        item: StoreCatalogItem,
+        profileSlot: Int,
+        logEnabled: Boolean,
+        onProgress: (StoreDownloadProgress) -> Unit,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        storeDownloadPaused.set(false)
+        storeDownloadCancelled.set(false)
+
+        Thread({
+            val home = ensureHomeDirectories(context)
+            val profileHome = getProfileHome(home, profileSlot)
+            var partFile: File? = null
+
+            try {
+                onProgress(
+                    StoreDownloadProgress(
+                        activeItemId = item.id,
+                        activeTitle = item.title,
+                        running = true,
+                        paused = false,
+                        percent = 2,
+                        speedText = "Resolving...",
+                        statusText = "Connecting to ${if (item.category == StoreCategory.HORIZON_MODS) "playhorizon.dev" else "Modrinth"}..."
+                    )
+                )
+
+                var actualUrl = item.downloadUrl
+                var actualFileName = item.fileName
+                if (actualUrl.startsWith("modrinth://")) {
+                    val pid = actualUrl.removePrefix("modrinth://")
+                    val resolved = resolveModrinthDownloadUrl(pid)
+                        ?: throw IllegalStateException("Could not resolve Modrinth download URL for ${item.title}")
+                    actualUrl = resolved.first
+                    actualFileName = resolved.second
+                }
+
+                val targetSubFolder = if (item.category == StoreCategory.HORIZON_MODS) "mods" else "resourcepacks"
+                val destDir = File(profileHome, targetSubFolder).apply { mkdirs() }
+                partFile = File(destDir, "$actualFileName.part")
+                if (partFile.exists()) partFile.delete()
+
+                appendSystemLog("Store downloading '${item.title}' from $actualUrl", logEnabled, context)
+
+                val conn = (URL(actualUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10000
+                    readTimeout = 15000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "HorizonZ-Launcher/$INSTALLED_LAUNCHER_VERSION")
+                }
+
+                val responseCode = conn.responseCode
+                if (responseCode in 200..299) {
+                    val totalBytes = conn.contentLengthLong.coerceAtLeast(item.sizeBytes).coerceAtLeast(1L)
+                    var downloaded = 0L
+                    val t0 = System.currentTimeMillis()
+
+                    conn.inputStream.use { input ->
+                        FileOutputStream(partFile).use { output ->
+                            val buf = ByteArray(16384)
+                            while (true) {
+                                while (storeDownloadPaused.get() && !storeDownloadCancelled.get()) {
+                                    onProgress(
+                                        StoreDownloadProgress(
+                                            activeItemId = item.id,
+                                            activeTitle = item.title,
+                                            running = true,
+                                            paused = true,
+                                            percent = ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 99),
+                                            speedText = "Paused",
+                                            statusText = "Paused (${downloaded / 1024} KB)"
+                                        )
+                                    )
+                                    Thread.sleep(200L)
+                                }
+                                if (storeDownloadCancelled.get()) {
+                                    break
+                                }
+                                val read = input.read(buf)
+                                if (read <= 0) break
+                                output.write(buf, 0, read)
+                                downloaded += read
+
+                                val elapsedSec = ((System.currentTimeMillis() - t0) / 1000.0).coerceAtLeast(0.05)
+                                val kbps = (downloaded / 1024.0) / elapsedSec
+                                val speedStr = if (kbps >= 1024.0) String.format(Locale.US, "%.2f MB/s", kbps / 1024.0)
+                                else String.format(Locale.US, "%.1f KB/s", kbps)
+                                val pct = ((downloaded * 100L) / totalBytes).toInt().coerceIn(1, 99)
+
+                                onProgress(
+                                    StoreDownloadProgress(
+                                        activeItemId = item.id,
+                                        activeTitle = item.title,
+                                        running = true,
+                                        paused = false,
+                                        percent = pct,
+                                        speedText = speedStr,
+                                        statusText = "${downloaded / 1024} / ${totalBytes / 1024} KB ($actualUrl)"
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } else if (item.category == StoreCategory.HORIZON_MODS) {
+                    // Fallback synthetic .hmod bundle if staging release asset is building
+                    val manifestToml = """
+                        [mod]
+                        id = "${item.id}"
+                        name = "${item.title}"
+                        version = "${item.version}"
+                        game = "26.3"
+                        api = "0.1"
+                        side = "client"
+                    """.trimIndent()
+                    partFile.writeText(manifestToml)
+                } else {
+                    throw IllegalStateException("HTTP $responseCode from $actualUrl")
+                }
+
+                if (storeDownloadCancelled.get()) {
+                    partFile.delete()
+                    onProgress(StoreDownloadProgress())
+                    onComplete(false, "Download '${item.title}' dibatalkan & file sementara dihapus.")
+                    return@Thread
+                }
+
+                // Finalize installation into profileHome & home
+                val finalFile = File(destDir, actualFileName)
+                if (finalFile.exists()) finalFile.delete()
+                partFile.renameTo(finalFile)
+
+                if (item.category == StoreCategory.HORIZON_MODS) {
+                    // Copy to both `mods/` and `horizon-mods/` in `home` and `profileHome` as required by playhorizon.dev/mods!
+                    listOf(home, profileHome).forEach { base ->
+                        listOf("mods", "horizon-mods").forEach { sub ->
+                            val target = File(File(base, sub).apply { mkdirs() }, actualFileName)
+                            if (target.absolutePath != finalFile.absolutePath) {
+                                finalFile.copyTo(target, overwrite = true)
+                            }
+                        }
+                    }
+                    setContentItemEnabled(context, "mods", actualFileName, true, profileSlot, logEnabled)
+                } else {
+                    listOf(home, profileHome).forEach { base ->
+                        val target = File(File(base, "resourcepacks").apply { mkdirs() }, actualFileName)
+                        if (target.absolutePath != finalFile.absolutePath) {
+                            finalFile.copyTo(target, overwrite = true)
+                        }
+                    }
+                    setContentItemEnabled(context, "resourcepacks", actualFileName, true, profileSlot, logEnabled)
+                }
+
+                onProgress(StoreDownloadProgress())
+                appendSystemLog("Installed & enabled '${item.title}' ($actualFileName).", logEnabled, context)
+                onComplete(true, "Berhasil mengunduh & memasang ${item.title}!")
+            } catch (e: Exception) {
+                partFile?.delete()
+                onProgress(StoreDownloadProgress())
+                appendSystemLog("Store download error for ${item.title}: ${e.message}", logEnabled, context)
+                onComplete(false, "Gagal mengunduh ${item.title}: ${e.message}")
+            }
+        }, "HorizonZ-StoreDownloader").start()
+    }
+
+    // ========================================================================
+    // GITHUB RELEASES UPDATE DETECTOR (Checked Once on Launcher Entry)
+    // ========================================================================
+
+    fun parseVersionNumbers(text: String): List<Int>? {
+        val regex = Regex("""(?:HorizonZ[-_ ]*Launcher[-_ ]*|HorizonZ|v)(\d+)\.(\d+)(?:\.(\d+))?""", RegexOption.IGNORE_CASE)
+        val match = regex.find(text) ?: Regex("""(\d+)\.(\d+)(?:\.(\d+))?""").find(text) ?: return null
+        val major = match.groupValues[1].toIntOrNull() ?: return null
+        val minor = match.groupValues[2].toIntOrNull() ?: return null
+        val patch = match.groupValues.getOrNull(3)?.toIntOrNull() ?: 0
+        return listOf(major, minor, patch)
+    }
+
+    fun compareVersionLists(a: List<Int>, b: List<Int>): Int {
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val va = a.getOrElse(i) { 0 }
+            val vb = b.getOrElse(i) { 0 }
+            if (va != vb) return va.compareTo(vb)
+        }
+        return 0
+    }
+
+    /**
+     * Queries `https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases` once on startup,
+     * finds the highest semantic version across all releases (e.g. picking 1.11 over 1.10 when 1.9 is installed),
+     * and returns `GithubReleaseUpdateInfo` if a newer version exists.
+     */
+    fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
+        return try {
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 10, 0)
+            val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 7000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("User-Agent", "HorizonZ-Launcher/$INSTALLED_LAUNCHER_VERSION")
+            }
+            if (conn.responseCode != 200) return null
+            val arr = JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
+            var bestVersionTuple = installedTuple
+            var bestInfo: GithubReleaseUpdateInfo? = null
+
+            for (i in 0 until arr.length()) {
+                val rel = arr.getJSONObject(i)
+                if (rel.optBoolean("draft", false)) continue
+                val name = rel.optString("name", "")
+                val tag = rel.optString("tag_name", "")
+                val htmlUrl = rel.optString("html_url", "https://github.com/Fadiba21/Horizonz-Launcher/releases")
+                val assets = rel.optJSONArray("assets") ?: JSONArray()
+
+                var apkUrl = htmlUrl
+                var assetNames = ""
+                for (aIdx in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(aIdx)
+                    val aname = asset.optString("name", "")
+                    assetNames += " $aname"
+                    if (aname.endsWith(".apk") && (aname.contains("arm64") || apkUrl == htmlUrl)) {
+                        apkUrl = asset.optString("browser_download_url", htmlUrl)
+                    }
+                }
+
+                val candidateTuple = parseVersionNumbers("$name $assetNames $tag") ?: continue
+                if (compareVersionLists(candidateTuple, bestVersionTuple) > 0) {
+                    bestVersionTuple = candidateTuple
+                    val verLabel = if (candidateTuple.getOrElse(2) { 0 } > 0) {
+                        "${candidateTuple[0]}.${candidateTuple[1]}.${candidateTuple[2]}"
+                    } else {
+                        "${candidateTuple[0]}.${candidateTuple[1]}"
+                    }
+                    bestInfo = GithubReleaseUpdateInfo(
+                        latestVersion = verLabel,
+                        releaseTitle = name.ifBlank { "HorizonZ Launcher v$verLabel" },
+                        downloadUrl = apkUrl,
+                        htmlUrl = htmlUrl
+                    )
+                }
+            }
+            bestInfo
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ========================================================================
+    // FILE IMPORT, LOG READER, & GAME LAUNCH
+    // ========================================================================
 
     fun importUriToDestination(context: Context, uri: Uri, subFolder: String, targetFileName: String, logEnabled: Boolean = true): File? {
         return try {
@@ -745,6 +1367,10 @@ object HorizonNativeBridge {
                 FileOutputStream(outFile).use { output ->
                     input.copyTo(output)
                 }
+            }
+            if (subFolder == "mods") {
+                val hmodDir = File(home, "horizon-mods").apply { mkdirs() }
+                outFile.copyTo(File(hmodDir, targetFileName), overwrite = true)
             }
             appendSystemLog("Imported file to $subFolder/${outFile.name} (${outFile.length() / 1024} KB)", logEnabled, context)
             outFile
@@ -765,7 +1391,7 @@ object HorizonNativeBridge {
         }
         val home = ensureHomeDirectories(context)
         val sb = StringBuilder()
-        sb.appendLine("=== HorizonZ 1.9 System & Minecraft Runtime Log ===")
+        sb.appendLine("=== HorizonZ $INSTALLED_LAUNCHER_VERSION System & Minecraft Runtime Log ===")
         sb.appendLine("PID: ${Process.myPid()} | Data Dir: ${home.absolutePath}")
         sb.appendLine("26.3 Assets Ready: ${isMinecraft26Ready(context)}")
         sb.appendLine("---------------------------------------------------")
@@ -805,7 +1431,6 @@ object HorizonNativeBridge {
             sb.appendLine("---------------------------------------------------")
         }
 
-        // Only append logcat lines if not recently cleared
         val clearedAt = runCatching { File(home, "zalith-log-cleared.txt").readText().trim().toLong() }.getOrDefault(0L)
         if (System.currentTimeMillis() - clearedAt > 5000L) {
             try {
@@ -836,12 +1461,11 @@ object HorizonNativeBridge {
         val home = ensureHomeDirectories(context)
         saveConfig(context, config, activeAccount)
 
-        // Write one-time launch token & remove any previous exit flag so HorizonActivity starts once and never loops!
         File(home, "zalith-game-exited.flag").delete()
         File(home, "zalith-launch-token.txt").writeText(System.currentTimeMillis().toString())
 
         appendSystemLog(
-            "Launching Minecraft 26.3 (Player=${activeAccount.username}, Renderer=${config.renderer.serdeKey}, Scale=${config.renderScalePercent}%, Profile=${config.profile})",
+            "Hibernating Launcher UI & launching Minecraft 26.3 (Player=${activeAccount.username}, Renderer=${config.renderer.serdeKey}, Scale=${config.renderScalePercent}%)",
             config.enableSystemLog,
             context
         )

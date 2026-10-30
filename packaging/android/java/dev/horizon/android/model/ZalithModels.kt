@@ -3,9 +3,45 @@ package dev.horizon.android.model
 enum class ZalithNavTab(val title: String) {
     HOME("Dashboard"),
     VERSIONS("Game & Assets"),
+    STORE("Store"),
     FILES("Files & Mods"),
     SETTINGS("Settings")
 }
+
+enum class StoreCategory(val label: String, val subtitle: String) {
+    HORIZON_MODS("Mods (playhorizon.dev)", "Official Horizon .hmod & Native Mods"),
+    MODRINTH_PACKS("Resource Packs (Modrinth)", "Community Resource Packs & Textures")
+}
+
+data class StoreCatalogItem(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val author: String,
+    val version: String,
+    val supportedMcVersions: List<String>,
+    val downloadUrl: String,
+    val fileName: String,
+    val sizeBytes: Long,
+    val sha256: String = "",
+    val category: StoreCategory,
+    val pageUrl: String = ""
+) {
+    val isCompatibleWith26_3: Boolean
+        get() = supportedMcVersions.any {
+            it.contains("26.3") || it.contains("26.") || it.equals("all", ignoreCase = true)
+        }
+
+    val versionBadge: String
+        get() = if (supportedMcVersions.isEmpty()) "Unknown" else supportedMcVersions.first()
+}
+
+data class GithubReleaseUpdateInfo(
+    val latestVersion: String,
+    val releaseTitle: String,
+    val downloadUrl: String,
+    val htmlUrl: String
+)
 
 enum class AccountType(val badge: String) {
     OFFLINE("Offline"),
@@ -16,48 +52,39 @@ enum class AccountType(val badge: String) {
  * Matches `crates/horizon-client/src/android/catalog.rs` `RendererMode` (`#[serde(rename_all = "kebab-case")]`):
  * - VulkanCompatibility -> "vulkan-compatibility"
  * - Vulkan -> "vulkan"
- * - OpenGl -> "open-gl" (CRITICAL: must be "open-gl", NOT "opengl"!)
+ * - OpenGl -> "open-gl"
  */
 enum class HorizonRendererMode(val serdeKey: String, val label: String) {
-    VULKAN_COMPAT("vulkan-compatibility", "Vulkan Compat"),
-    VULKAN("vulkan", "Vulkan"),
-    OPENGL("open-gl", "OpenGL ES")
+    VULKAN_COMPAT("vulkan-compatibility", "Vulkan Compatibility (Default)"),
+    VULKAN("vulkan", "Vulkan (High Performance)"),
+    OPENGL("open-gl", "OpenGL ES (Fallback)")
 }
 
-/**
- * Matches `crates/horizon-client-render/src/android_gamepad.rs` `InputMode` (`#[serde(rename_all = "kebab-case")]`).
- */
 enum class HorizonInputHost(val serdeKey: String, val label: String) {
-    AUTO("auto", "Auto"),
-    TOUCH("touch", "Touch"),
-    KEYBOARD_MOUSE("keyboard-mouse", "Keyboard/Mouse"),
-    CONTROLLER("controller", "Controller")
+    AUTO("auto", "Auto Detect"),
+    TOUCH("touch", "Touch Screen"),
+    KEYBOARD_MOUSE("keyboard-mouse", "Keyboard & Mouse"),
+    CONTROLLER("controller", "Gamepad / Controller")
 }
 
-/**
- * Matches `crates/horizon-client/src/android/catalog.rs` `Orientation` (`#[serde(rename_all = "kebab-case")]`).
- */
 enum class HorizonOrientation(val serdeKey: String, val label: String) {
     LANDSCAPE("landscape", "Landscape"),
-    REVERSE_LANDSCAPE("reverse-landscape", "Flipped"),
+    REVERSE_LANDSCAPE("reverse-landscape", "Reverse Landscape (Flipped)"),
     PORTRAIT("portrait", "Portrait"),
-    REVERSE_PORTRAIT("reverse-portrait", "Rev Portrait"),
+    REVERSE_PORTRAIT("reverse-portrait", "Reverse Portrait"),
     AUTO("auto", "Auto Sensor")
 }
 
-/**
- * Matches `crates/horizon-client/src/android/shader_catalog.rs` `Origin` (`#[serde(rename_all = "kebab-case")]`).
- */
 enum class HorizonContentOrigin(val serdeKey: String, val label: String) {
-    HORIZON("horizon", "Horizon"),
+    HORIZON("horizon", "Horizon (playhorizon.dev)"),
     MODRINTH("modrinth", "Modrinth")
 }
 
 enum class ZalithThemePalette(val label: String, val primaryHex: Long, val secondaryHex: Long, val surfaceHex: Long) {
-    MATERIAL_YOU("Material You (System)", 0xFF64B5F6, 0xFF81C784, 0xFF10131A),
-    EMBERMIRE("Embermire", 0xFFFF7043, 0xFFFFB74D, 0xFF12151E),
+    MATERIAL_YOU("Material You (Dynamic)", 0xFF64B5F6, 0xFF81C784, 0xFF10131A),
+    EMBERMIRE("Embermire Dark", 0xFFFF7043, 0xFFFFB74D, 0xFF12151E),
     HORIZON_RUST("Horizon Rust", 0xFFFF5722, 0xFF26A69A, 0xFF0E1218),
-    AMOLED_EMERALD("Emerald Dark", 0xFF66BB6A, 0xFFA5D6A7, 0xFF090C10)
+    AMOLED_EMERALD("Emerald AMOLED", 0xFF66BB6A, 0xFFA5D6A7, 0xFF090C10)
 }
 
 data class ZalithAccount(
@@ -68,9 +95,6 @@ data class ZalithAccount(
     val isActive: Boolean = false
 )
 
-/**
- * Complete Launcher + Upstream `catalog.rs` + Two-Way Minecraft `options.txt` Sync State.
- */
 data class HorizonConfigState(
     val profile: Int = 0,
     val renderer: HorizonRendererMode = HorizonRendererMode.VULKAN_COMPAT,
@@ -83,7 +107,6 @@ data class HorizonConfigState(
     val shaderSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,
     val defaultServer: String = "",
     val proxy: String = "",
-    // Two-way synced Minecraft in-game options.txt parameters
     val mcRenderDistance: Int = 8,
     val mcSimulationDistance: Int = 8,
     val mcMaxFps: Int = 120,
@@ -91,7 +114,6 @@ data class HorizonConfigState(
     val mcFov: Int = 70,
     val mcVsync: Boolean = true,
     val mcFullscreen: Boolean = true,
-    // Launcher UI & Runtime Preferences
     val themePalette: ZalithThemePalette = ZalithThemePalette.MATERIAL_YOU,
     val useDynamicColor: Boolean = true,
     val enableSystemLog: Boolean = true,

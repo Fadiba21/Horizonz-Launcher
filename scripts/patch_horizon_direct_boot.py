@@ -190,7 +190,7 @@ if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.9 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
+// === HorizonZ 1.10 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -237,6 +237,14 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
         let t_origin = std::time::Instant::now();
 
         let res = horizon_client::official_install::install_with_progress(&home_path, |prog| {
+            let pause_flag = home_path.join("zalith-install-paused.flag");
+            let cancel_flag = home_path.join("zalith-install-cancelled.flag");
+            while pause_flag.exists() && !cancel_flag.exists() {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            if cancel_flag.exists() {
+                return;
+            }
             let stage_name = format!("{:?}", prog.stage);
             let total = prog.total.max(1);
             let pct = if prog.total > 0 { (prog.done.saturating_mul(100)) / total } else { 100 };

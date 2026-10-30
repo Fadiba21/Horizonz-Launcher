@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -56,9 +57,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import dev.horizon.android.R
 import dev.horizon.android.bridge.AssetInstallStatus
 import dev.horizon.android.bridge.HorizonNativeBridge
+import dev.horizon.android.bridge.StoreDownloadProgress
 import dev.horizon.android.model.*
 import dev.horizon.android.ui.theme.HorizonZalithTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -78,6 +82,11 @@ private val DASHBOARD_WALLPAPERS = listOf(
 )
 
 class ZalithMainActivity : ComponentActivity() {
+    companion object {
+        @Volatile
+        private var hasCheckedUpdateThisSession = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -97,12 +106,39 @@ class ZalithMainActivity : ComponentActivity() {
             var accounts by remember { mutableStateOf(HorizonNativeBridge.loadSavedAccounts(context)) }
             val activeAccount = accounts.firstOrNull { it.isActive } ?: accounts.first()
 
-            // Reload config & options.txt whenever returning from :game process!
+            // Hibernation state: pauses all UI animations, wallpapers, and polling loops when Minecraft is running!
+            var isLauncherHibernated by remember { mutableStateOf(false) }
+
+            // In-app GitHub Release Update Banner state (checked once on Launcher entry)
+            var releaseUpdateInfo by remember { mutableStateOf<GithubReleaseUpdateInfo?>(null) }
+            var showUpdateBanner by remember { mutableStateOf(false) }
+
+            LaunchedEffect(Unit) {
+                if (!hasCheckedUpdateThisSession) {
+                    hasCheckedUpdateThisSession = true
+                    val found = withContext(Dispatchers.IO) {
+                        HorizonNativeBridge.checkGithubLatestReleaseUpdate()
+                    }
+                    if (found != null) {
+                        releaseUpdateInfo = found
+                        delay(350L)
+                        showUpdateBanner = true
+                    }
+                }
+            }
+
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        config = HorizonNativeBridge.loadSavedConfig(context)
-                        accounts = HorizonNativeBridge.loadSavedAccounts(context)
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> {
+                            isLauncherHibernated = false
+                            config = HorizonNativeBridge.loadSavedConfig(context)
+                            accounts = HorizonNativeBridge.loadSavedAccounts(context)
+                        }
+                        Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                            isLauncherHibernated = true
+                        }
+                        else -> {}
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
@@ -117,19 +153,150 @@ class ZalithMainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ZalithCleanLauncherScreen(
-                        config = config,
-                        accounts = accounts,
-                        activeAccount = activeAccount,
-                        onConfigChange = { updated ->
-                            config = updated
-                            HorizonNativeBridge.saveConfig(context, updated, activeAccount)
-                        },
-                        onAccountsChange = { updatedList ->
-                            accounts = updatedList
-                            HorizonNativeBridge.saveAccounts(context, updatedList, config)
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ZalithCleanLauncherScreen(
+                            config = config,
+                            accounts = accounts,
+                            activeAccount = activeAccount,
+                            isHibernated = isLauncherHibernated,
+                            onConfigChange = { updated ->
+                                config = updated
+                                HorizonNativeBridge.saveConfig(context, updated, activeAccount)
+                            },
+                            onAccountsChange = { updatedList ->
+                                accounts = updatedList
+                                HorizonNativeBridge.saveAccounts(context, updatedList, config)
+                            },
+                            onEnterGameHibernation = {
+                                isLauncherHibernated = true
+                                HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                            }
+                        )
+
+                        // Top Slide-Down In-App Update Notification Banner (slides down from top, slides up on Update/Later)
+                        AnimatedVisibility(
+                            visible = showUpdateBanner && releaseUpdateInfo != null && !isLauncherHibernated,
+                            enter = slideInVertically(
+                                initialOffsetY = { fullHeight -> -fullHeight - 60 },
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioLowBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ) + fadeIn(tween(260)),
+                            exit = slideOutVertically(
+                                targetOffsetY = { fullHeight -> -fullHeight - 60 },
+                                animationSpec = tween(260, easing = FastOutLinearInEasing)
+                            ) + fadeOut(tween(200)),
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .windowInsetsPadding(WindowInsets.safeDrawing)
+                                .padding(top = 8.dp, start = 24.dp, end = 24.dp)
+                        ) {
+                            releaseUpdateInfo?.let { info ->
+                                InAppUpdateBannerCard(
+                                    info = info,
+                                    onUpdateClick = {
+                                        showUpdateBanner = false
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                            context.startActivity(intent)
+                                        } catch (ignored: Exception) {
+                                        }
+                                    },
+                                    onLaterClick = {
+                                        showUpdateBanner = false
+                                    }
+                                )
+                            }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InAppUpdateBannerCard(
+    info: GithubReleaseUpdateInfo,
+    onUpdateClick: () -> Unit,
+    onLaterClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        shadowElevation = 12.dp,
+        modifier = Modifier.widthIn(max = 520.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                            MaterialTheme.colorScheme.surface
+                        )
                     )
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(
+                        Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = "New Version!! (v${info.latestVersion})",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Installed: v${HorizonNativeBridge.INSTALLED_LAUNCHER_VERSION} • ${info.releaseTitle}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton(
+                    onClick = onLaterClick,
+                    modifier = Modifier.height(34.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Text("Later", fontSize = 12.sp)
+                }
+                Button(
+                    onClick = onUpdateClick,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(34.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Text("Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -164,13 +331,108 @@ fun Modifier.animatedPressScale(
         )
 }
 
+/**
+ * Compact Dropdown List Selector: replaces wide multi-button rows with a clean, animated dropdown pill.
+ */
+@Composable
+fun <T> CompactDropdownSelector(
+    label: String,
+    selectedItem: T,
+    options: List<T>,
+    itemLabel: (T) -> String,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val chevronAngle by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(220),
+        label = "DropdownChevron"
+    )
+
+    Box(modifier = modifier) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animatedPressScale { expanded = !expanded }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = label,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = itemLabel(selectedItem),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .rotate(chevronAngle),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                val isSelected = option == selectedItem
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = itemLabel(option),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    },
+                    trailingIcon = if (isSelected) {
+                        {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    } else null,
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ZalithCleanLauncherScreen(
     config: HorizonConfigState,
     accounts: List<ZalithAccount>,
     activeAccount: ZalithAccount,
+    isHibernated: Boolean,
     onConfigChange: (HorizonConfigState) -> Unit,
-    onAccountsChange: (List<ZalithAccount>) -> Unit
+    onAccountsChange: (List<ZalithAccount>) -> Unit,
+    onEnterGameHibernation: () -> Unit
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
@@ -178,8 +440,25 @@ fun ZalithCleanLauncherScreen(
     var showLogDialog by remember { mutableStateOf(false) }
     var installStatus by remember { mutableStateOf(HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)) }
 
-    LaunchedEffect(config.enableSystemLog) {
-        while (true) {
+    // If Launcher is hibernated (player is inside Minecraft), stop all background polling and render lightweight placeholder!
+    if (isHibernated) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Minecraft 26.3 Running — Launcher UI Hibernated (0% Overhead)",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+        }
+        return
+    }
+
+    LaunchedEffect(config.enableSystemLog, isHibernated) {
+        while (!isHibernated) {
             installStatus = HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)
             delay(500L)
         }
@@ -189,7 +468,7 @@ fun ZalithCleanLauncherScreen(
         selectedTab = ZalithNavTab.VERSIONS
         val started = HorizonNativeBridge.startMinecraft26Download(context, config.enableSystemLog)
         if (!started && installStatus.ready) {
-            HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+            onEnterGameHibernation()
         }
     }
 
@@ -205,7 +484,7 @@ fun ZalithCleanLauncherScreen(
                 )
             )
             .windowInsetsPadding(WindowInsets.safeDrawing.union(WindowInsets.displayCutout))
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             ZalithMinimalTopBar(
@@ -218,7 +497,7 @@ fun ZalithCleanLauncherScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(top = 4.dp, bottom = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 ZalithIconRail(
                     selectedTab = selectedTab,
@@ -244,14 +523,31 @@ fun ZalithCleanLauncherScreen(
                     label = "TabContentTransition"
                 ) { tab ->
                     when (tab) {
-                        ZalithNavTab.HOME -> CleanHomeViewport(logEnabled = config.enableSystemLog)
+                        ZalithNavTab.HOME -> CleanHomeViewport(
+                            logEnabled = config.enableSystemLog,
+                            isHibernated = isHibernated
+                        )
                         ZalithNavTab.VERSIONS -> CleanVersionsViewport(
                             context = context,
                             installStatus = installStatus,
+                            logEnabled = config.enableSystemLog,
                             onStartDownload = triggerDownload,
-                            onRepairAssets = {
-                                HorizonNativeBridge.repairAndVerifyAssets(context, config.enableSystemLog)
+                            onPauseDownload = {
+                                HorizonNativeBridge.pauseMinecraft26Download(context, config.enableSystemLog)
+                            },
+                            onResumeDownload = {
+                                HorizonNativeBridge.resumeMinecraft26Download(context, config.enableSystemLog)
+                            },
+                            onCancelDownload = {
+                                HorizonNativeBridge.cancelMinecraft26Download(context, config.enableSystemLog)
+                            },
+                            onSmartRepairAssets = {
+                                HorizonNativeBridge.smartRepairAssets(context, config.enableSystemLog)
                             }
+                        )
+                        ZalithNavTab.STORE -> CleanStoreViewport(
+                            profileSlot = config.profile,
+                            logEnabled = config.enableSystemLog
                         )
                         ZalithNavTab.FILES -> CleanFilesViewport(
                             profileSlot = config.profile,
@@ -274,7 +570,9 @@ fun ZalithCleanLauncherScreen(
                         if (!installStatus.ready && !installStatus.running) {
                             triggerDownload()
                         } else if (!installStatus.running) {
-                            HorizonNativeBridge.launchNativeGame(context, config, activeAccount)
+                            onEnterGameHibernation()
+                        } else {
+                            selectedTab = ZalithNavTab.VERSIONS
                         }
                     }
                 )
@@ -337,15 +635,15 @@ private fun ZalithMinimalTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(42.dp)
-            .padding(horizontal = 6.dp),
+            .height(38.dp)
+            .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(10.dp)
+                    .size(9.dp)
                     .clip(CircleShape)
                     .background(dotColor)
             )
@@ -355,18 +653,19 @@ private fun ZalithMinimalTopBar(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            if (installStatus.running && installStatus.speedText.isNotBlank()) {
+            if (installStatus.running) {
                 Spacer(Modifier.width(10.dp))
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
                 ) {
                     Text(
-                        text = "${installStatus.percent}% • ${installStatus.speedText}",
+                        text = if (installStatus.paused) "Paused (${installStatus.percent}%)"
+                        else "${installStatus.percent}% • ${installStatus.speedText.ifBlank { "Downloading" }}",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
             }
@@ -378,17 +677,17 @@ private fun ZalithMinimalTopBar(
             modifier = Modifier.animatedPressScale(onClick = onOpenLogs)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Icon(
                     Icons.Default.Terminal,
                     contentDescription = "System Log",
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
-                Text("Log", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Log", fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
@@ -404,25 +703,26 @@ private fun ZalithIconRail(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
         modifier = Modifier
             .fillMaxHeight()
-            .width(56.dp)
+            .width(52.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 12.dp),
+                .padding(vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
         ) {
             ZalithNavTab.entries.forEach { tab ->
                 val selected = tab == selectedTab
                 val icon = when (tab) {
                     ZalithNavTab.HOME -> Icons.Default.Home
                     ZalithNavTab.VERSIONS -> Icons.Default.Download
+                    ZalithNavTab.STORE -> Icons.Default.Storefront
                     ZalithNavTab.FILES -> Icons.Default.Folder
                     ZalithNavTab.SETTINGS -> Icons.Default.Settings
                 }
                 val cornerRadius by animateDpAsState(
-                    targetValue = if (selected) 16.dp else 12.dp,
+                    targetValue = if (selected) 15.dp else 11.dp,
                     animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
                     label = "NavCornerMorph"
                 )
@@ -434,7 +734,7 @@ private fun ZalithIconRail(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(38.dp)
                         .clip(RoundedCornerShape(cornerRadius))
                         .background(bgColor)
                         .animatedPressScale { onSelectTab(tab) }
@@ -444,7 +744,7 @@ private fun ZalithIconRail(
                         contentDescription = tab.title,
                         tint = if (selected) MaterialTheme.colorScheme.onPrimary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
@@ -452,14 +752,8 @@ private fun ZalithIconRail(
     }
 }
 
-/**
- * Main Dashboard Card:
- * - Cycles 12 HD 16:9 Minecraft Wallpapers (fetched from Lxtharia/minegrub-theme & usman-369/wallpapers + custom user imports)
- *   every 5 seconds with smooth crossfade and `ContentScale.Crop` (normal 16:9 aspect ratio, zero distortion).
- * - Includes a discrete top-right button to import any additional HD wallpaper from the phone's gallery.
- */
 @Composable
-private fun CleanHomeViewport(logEnabled: Boolean) {
+private fun CleanHomeViewport(logEnabled: Boolean, isHibernated: Boolean) {
     val context = LocalContext.current
     var customWallpapers by remember { mutableStateOf(HorizonNativeBridge.getCustomWallpapers(context)) }
     val totalCount = DASHBOARD_WALLPAPERS.size + customWallpapers.size
@@ -480,17 +774,15 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
         }
     }
 
-    // Cycle HD Minecraft Wallpaper every 5 seconds
-    LaunchedEffect(totalCount) {
-        while (true) {
+    LaunchedEffect(totalCount, isHibernated) {
+        while (!isHibernated) {
             delay(5000L)
             wallpaperIndex = (wallpaperIndex + 1) % totalCount.coerceAtLeast(1)
         }
     }
 
-    // Cycle Minecraft Splash Quote every 5 seconds
-    LaunchedEffect(Unit) {
-        while (true) {
+    LaunchedEffect(isHibernated) {
+        while (!isHibernated) {
             delay(5000L)
             var next = (MINECRAFT_SPLASH_QUOTES.indices).random()
             if (next == quoteIndex) {
@@ -545,7 +837,6 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
                 }
             }
 
-            // Subtle dark gradient scrim at bottom for crisp text legibility
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -559,7 +850,6 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
                     )
             )
 
-            // Top-right button to add custom wallpaper or skip to next wallpaper
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -582,16 +872,15 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
                 }
             }
 
-            // Clean Title + Animated Minecraft Splash Quote
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
                     text = "Minecraft",
-                    fontSize = 34.sp,
+                    fontSize = 32.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White
                 )
@@ -614,7 +903,7 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
                 ) { quote ->
                     Text(
                         text = "“$quote”",
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontStyle = FontStyle.Italic,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFFFE082)
@@ -625,14 +914,26 @@ private fun CleanHomeViewport(logEnabled: Boolean) {
     }
 }
 
+/**
+ * Game & Assets Download Viewport:
+ * - Supports Pause & Resume during asset downloads.
+ * - Supports Cancel with warning pop-up dialog (`AlertDialog`) and immediate deletion of partial files.
+ * - Supports Smart Incremental Repair (`Smart Repair`) that checks existing files first and only repairs corrupted/missing items.
+ */
 @Composable
 private fun CleanVersionsViewport(
     context: android.content.Context,
     installStatus: AssetInstallStatus,
+    logEnabled: Boolean,
     onStartDownload: () -> Unit,
-    onRepairAssets: () -> Unit
+    onPauseDownload: () -> Unit,
+    onResumeDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onSmartRepairAssets: () -> Unit
 ) {
     var logExpanded by remember { mutableStateOf(true) }
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+
     val chevronRotation by animateFloatAsState(
         targetValue = if (logExpanded) 180f else 0f,
         animationSpec = tween(250),
@@ -644,6 +945,36 @@ private fun CleanVersionsViewport(
         label = "DownloadProgress"
     )
 
+    if (showCancelConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirmDialog = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFFFB74D)) },
+            title = { Text("Batalkan Download?", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    "Proses download aset yang sedang berjalan akan dihentikan dan file sementara yang sedang diunduh akan langsung dihapus.",
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirmDialog = false
+                        onCancelDownload()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) {
+                    Text("Ya, Batalkan & Hapus", color = Color.White, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirmDialog = false }) {
+                    Text("Lanjutkan Download", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -652,9 +983,9 @@ private fun CleanVersionsViewport(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(14.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -663,10 +994,14 @@ private fun CleanVersionsViewport(
             ) {
                 Text("Game & Assets", style = MaterialTheme.typography.titleMedium)
                 if (!installStatus.running) {
-                    TextButton(onClick = onRepairAssets) {
+                    FilledTonalButton(
+                        onClick = onSmartRepairAssets,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
                         Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Repair / Verify Assets", fontSize = 11.sp)
+                        Text("Smart Repair (Check Missing/Corrupt)", fontSize = 11.sp)
                     }
                 }
             }
@@ -677,8 +1012,8 @@ private fun CleanVersionsViewport(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -695,39 +1030,67 @@ private fun CleanVersionsViewport(
                             Text(
                                 text = if (installStatus.ready) "All game files, worldgen tables, and 60 touch controls installed"
                                 else if (installStatus.running) installStatus.stage
-                                else "Download official game & assets (supports background download)",
+                                else "Download official game & assets (Pause / Resume / Background supported)",
                                 fontSize = 12.sp,
                                 color = if (installStatus.ready) Color(0xFF66BB6A)
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(8.dp))
 
-                        Button(
-                            onClick = onStartDownload,
-                            enabled = !installStatus.running,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.height(42.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (installStatus.ready) Icons.Default.CheckCircle else Icons.Default.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = if (installStatus.running) "${installStatus.percent}%"
-                                else if (installStatus.ready) "Re-verify"
-                                else "Download",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        if (installStatus.running) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        if (installStatus.paused) onResumeDownload() else onPauseDownload()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (installStatus.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (installStatus.paused) "Resume" else "Pause", fontSize = 11.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { showCancelConfirmDialog = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFFFF6E6E))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFFF6E6E))
+                                }
+                            }
+                        } else {
+                            Button(
+                                onClick = if (installStatus.ready) onSmartRepairAssets else onStartDownload,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (installStatus.ready) Icons.Default.Verified else Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = if (installStatus.ready) "Verify Files" else "Download",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
 
                     if (installStatus.running || installStatus.done > 0L || installStatus.error.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
@@ -736,7 +1099,7 @@ private fun CleanVersionsViewport(
                                     text = installStatus.stage,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = if (installStatus.paused) Color(0xFFFFB74D) else MaterialTheme.colorScheme.primary
                                 )
                                 val rightLabel = buildString {
                                     if (installStatus.speedText.isNotBlank()) {
@@ -802,7 +1165,7 @@ private fun CleanVersionsViewport(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { logExpanded = !logExpanded }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -837,7 +1200,7 @@ private fun CleanVersionsViewport(
                                             HorizonNativeBridge.copyToClipboard(context, "Download Log", textToCopy)
                                         },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp)
+                                        modifier = Modifier.height(26.dp)
                                     ) {
                                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(13.dp))
                                         Spacer(Modifier.width(4.dp))
@@ -864,12 +1227,12 @@ private fun CleanVersionsViewport(
                                 } else if (installStatus.ready) {
                                     "[OK] Minecraft 26.3 assets, worldgen tables, and 60/60 touch controls verified."
                                 } else {
-                                    "Tap 'Download' or 'INSTALL' to begin. Background notification will show live speed & percentage."
+                                    "Tap 'Download' or 'INSTALL' to begin. Supports Pause, Resume, Cancel & Background Notification."
                                 }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 80.dp, max = 165.dp)
+                                        .heightIn(min = 75.dp, max = 155.dp)
                                         .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(Color(0xFF0A0D12))
@@ -892,20 +1255,324 @@ private fun CleanVersionsViewport(
     }
 }
 
+/**
+ * Store Tab:
+ * - Mods fetched from `https://playhorizon.dev/mods` (`index.json`)
+ * - Resource Packs fetched from Modrinth (`https://api.modrinth.com/v2/search`)
+ * - Checks Minecraft version compatibility before downloading: if an item does not explicitly target 26.3,
+ *   displays a warning pop-up with **Tetap Download** and **Cancel**.
+ * - Supports Pause, Resume, and Cancel (with immediate deletion of `.part` file) during Store downloads!
+ */
+@Composable
+private fun CleanStoreViewport(
+    profileSlot: Int,
+    logEnabled: Boolean
+) {
+    val context = LocalContext.current
+    var selectedCategory by remember { mutableStateOf(StoreCategory.HORIZON_MODS) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var catalogItems by remember { mutableStateOf<List<StoreCatalogItem>>(emptyList()) }
+    var storeProgress by remember { mutableStateOf(StoreDownloadProgress()) }
+    var pendingIncompatibleItem by remember { mutableStateOf<StoreCatalogItem?>(null) }
+    var showCancelStoreDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedCategory, searchQuery) {
+        isLoading = true
+        val fetched = withContext(Dispatchers.IO) {
+            when (selectedCategory) {
+                StoreCategory.HORIZON_MODS -> HorizonNativeBridge.fetchHorizonModsCatalog(searchQuery)
+                StoreCategory.MODRINTH_PACKS -> HorizonNativeBridge.fetchModrinthResourcePacks(searchQuery)
+            }
+        }
+        catalogItems = fetched
+        isLoading = false
+    }
+
+    val startItemDownload = { item: StoreCatalogItem ->
+        HorizonNativeBridge.downloadAndInstallStoreItem(
+            context = context,
+            item = item,
+            profileSlot = profileSlot,
+            logEnabled = logEnabled,
+            onProgress = { prog -> storeProgress = prog },
+            onComplete = { _, msg ->
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    // Version compatibility warning pop-up before downloading incompatible items
+    pendingIncompatibleItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingIncompatibleItem = null },
+            icon = { Icon(Icons.Default.WarningAmber, contentDescription = null, tint = Color(0xFFFFB74D)) },
+            title = { Text("Peringatan Versi Minecraft", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    "Item '${item.title}' mendukung Minecraft versi ${item.versionBadge} dan belum terverifikasi resmi untuk Minecraft 26.3.\n\nApakah Anda ingin tetap mengunduh dan memasangnya?",
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = item
+                        pendingIncompatibleItem = null
+                        startItemDownload(target)
+                    }
+                ) {
+                    Text("Tetap Download", fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingIncompatibleItem = null }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    if (showCancelStoreDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelStoreDialog = false },
+            icon = { Icon(Icons.Default.Cancel, contentDescription = null, tint = Color(0xFFFF6E6E)) },
+            title = { Text("Batalkan Download Store?", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    "File '${storeProgress.activeTitle}' yang sedang diunduh akan dihentikan dan langsung dihapus.",
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelStoreDialog = false
+                        HorizonNativeBridge.storeDownloadCancelled.set(true)
+                        HorizonNativeBridge.storeDownloadPaused.set(false)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) {
+                    Text("Ya, Batalkan & Hapus", color = Color.White, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelStoreDialog = false }) {
+                    Text("Lanjutkan", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Compact Top Controls: Category Dropdown + Search Box
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CompactDropdownSelector(
+                    label = "Store Source",
+                    selectedItem = selectedCategory,
+                    options = StoreCategory.entries,
+                    itemLabel = { it.label },
+                    onSelect = { selectedCategory = it },
+                    modifier = Modifier.weight(0.45f)
+                )
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            if (selectedCategory == StoreCategory.HORIZON_MODS) "Search playhorizon.dev/mods..."
+                            else "Search Modrinth resource packs...",
+                            fontSize = 11.sp
+                        )
+                    },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    modifier = Modifier
+                        .weight(0.55f)
+                        .height(50.dp)
+                )
+            }
+
+            // Active Store Download Bar with Pause / Resume / Cancel
+            AnimatedVisibility(visible = storeProgress.running) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Downloading ${storeProgress.activeTitle} (${storeProgress.percent}%)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${storeProgress.speedText} • ${storeProgress.statusText}",
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        val nextPaused = !HorizonNativeBridge.storeDownloadPaused.get()
+                                        HorizonNativeBridge.storeDownloadPaused.set(nextPaused)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text(if (storeProgress.paused) "Resume" else "Pause", fontSize = 11.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { showCancelStoreDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Cancel", fontSize = 11.sp, color = Color(0xFFFF6E6E))
+                                }
+                            }
+                        }
+                        LinearProgressIndicator(
+                            progress = { (storeProgress.percent / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(50))
+                        )
+                    }
+                }
+            }
+
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                }
+            } else if (catalogItems.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No items found for your search.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(catalogItems, key = { it.id }) { item ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = item.title,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (item.isCompatibleWith26_3) Color(0xFF66BB6A).copy(alpha = 0.18f)
+                                            else Color(0xFFFFB74D).copy(alpha = 0.20f)
+                                        ) {
+                                            Text(
+                                                text = "MC ${item.versionBadge}",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (item.isCompatibleWith26_3) Color(0xFF81C784) else Color(0xFFFFCC80),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = item.summary,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "By ${item.author} • v${item.version}",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                Spacer(Modifier.width(10.dp))
+
+                                Button(
+                                    onClick = {
+                                        if (item.isCompatibleWith26_3) {
+                                            startItemDownload(item)
+                                        } else {
+                                            pendingIncompatibleItem = item
+                                        }
+                                    },
+                                    enabled = !storeProgress.running,
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Install", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun CleanFilesViewport(profileSlot: Int, logEnabled: Boolean) {
     val context = LocalContext.current
     val home = remember(profileSlot) {
         HorizonNativeBridge.getProfileHome(HorizonNativeBridge.ensureHomeDirectories(context), profileSlot)
     }
-    var currentFolder by remember { mutableStateOf("saves") }
+    var currentFolder by remember { mutableStateOf("mods") }
     var refreshCount by remember { mutableIntStateOf(0) }
 
     val tabs = listOf(
-        "saves" to "Worlds",
-        "resourcepacks" to "Resource Packs",
         "mods" to "Mods (.hmod)",
-        "shaderpacks" to "Shaders"
+        "resourcepacks" to "Resource Packs",
+        "shaderpacks" to "Shader Packs",
+        "saves" to "Worlds (Saves)"
     )
 
     val dirFile = File(home, currentFolder).apply { mkdirs() }
@@ -935,41 +1602,37 @@ private fun CleanFilesViewport(profileSlot: Int, logEnabled: Boolean) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    tabs.forEach { (folder, label) ->
-                        FilterChip(
-                            selected = currentFolder == folder,
-                            onClick = { currentFolder = folder },
-                            label = { Text(label, fontSize = 11.sp) }
-                        )
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
+                CompactDropdownSelector(
+                    label = "Folder Category",
+                    selectedItem = tabs.first { it.first == currentFolder },
+                    options = tabs,
+                    itemLabel = { it.second },
+                    onSelect = { currentFolder = it.first },
+                    modifier = Modifier.weight(1f)
+                )
+
                 OutlinedButton(
                     onClick = { HorizonNativeBridge.openSystemFilesApp(context) },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.height(42.dp)
                 ) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Open Folder", fontSize = 11.sp)
                 }
-                Spacer(Modifier.width(6.dp))
+
                 FilledTonalButton(
                     onClick = { picker.launch("*/*") },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(42.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
@@ -980,7 +1643,7 @@ private fun CleanFilesViewport(profileSlot: Int, logEnabled: Boolean) {
             if (itemsList.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        "No items in $currentFolder yet — tap Import or Open Folder to add files.",
+                        "No items in $currentFolder yet — install from Store tab or tap Import.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1049,10 +1712,7 @@ private fun CleanFilesViewport(profileSlot: Int, logEnabled: Boolean) {
 }
 
 /**
- * Complete Settings Menu synchronized 100% with:
- * 1) Upstream `Vasysik/horizon-android` (`crates/horizon-client/src/android/catalog.rs` -> `android-launcher.json`)
- * 2) Touch Keypad Runtime (`horizon-keypad.json`)
- * 3) Two-way Minecraft In-Game `options.txt` (`renderDistance`, `simulationDistance`, `maxFps`, `guiScale`, `enableVsync`, `fullscreen`)
+ * Compact Settings Menu using `CompactDropdownSelector` list-picker controls instead of crowded button rows.
  */
 @Composable
 private fun CleanSettingsViewport(
@@ -1061,7 +1721,6 @@ private fun CleanSettingsViewport(
     onOpenLogs: () -> Unit
 ) {
     val context = LocalContext.current
-    val scalePresets = listOf(50, 60, 75, 85, 100)
 
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -1071,48 +1730,58 @@ private fun CleanSettingsViewport(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(14.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Horizon Engine, Runtime & Minecraft Settings", style = MaterialTheme.typography.titleMedium)
+            Text("Settings (Engine, In-Game & Launcher)", style = MaterialTheme.typography.titleMedium)
 
-            // 1. Graphics Renderer & Render Scale (`renderer` & `render_scale` in android-launcher.json)
+            // 1. Compact Engine & Display Row (Dropdown List Selectors + Scale Slider)
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Graphics Renderer Backend (Native Runtime)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        HorizonRendererMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = config.renderer == mode,
-                                onClick = { onConfigChange(config.copy(renderer = mode)) },
-                                label = { Text("${mode.label} (${mode.serdeKey})", fontSize = 11.sp) }
-                            )
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        CompactDropdownSelector(
+                            label = "Graphics Renderer",
+                            selectedItem = config.renderer,
+                            options = HorizonRendererMode.entries,
+                            itemLabel = { it.label },
+                            onSelect = { onConfigChange(config.copy(renderer = it)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactDropdownSelector(
+                            label = "Screen Orientation",
+                            selectedItem = config.orientation,
+                            options = HorizonOrientation.entries,
+                            itemLabel = { it.label },
+                            onSelect = { onConfigChange(config.copy(orientation = it)) },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Render Resolution Scale: ${config.renderScalePercent}%", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            scalePresets.forEach { preset ->
-                                AssistChip(
-                                    onClick = { onConfigChange(config.copy(renderScalePercent = preset)) },
-                                    label = { Text("$preset%", fontSize = 10.sp) }
-                                )
-                            }
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        CompactDropdownSelector(
+                            label = "Input Mode",
+                            selectedItem = config.inputHost,
+                            options = HorizonInputHost.entries,
+                            itemLabel = { it.label },
+                            onSelect = { onConfigChange(config.copy(inputHost = it)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactDropdownSelector(
+                            label = "Game Profile Slot",
+                            selectedItem = config.profile,
+                            options = listOf(0, 1, 2, 3),
+                            itemLabel = { if (it == 0) "Default (Profile 0)" else "Profile $it" },
+                            onSelect = { onConfigChange(config.copy(profile = it)) },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
+
+                    Text("Render Resolution Scale: ${config.renderScalePercent}%", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     Slider(
                         value = config.renderScalePercent.toFloat(),
                         onValueChange = { onConfigChange(config.copy(renderScalePercent = it.toInt())) },
@@ -1121,17 +1790,34 @@ private fun CleanSettingsViewport(
                 }
             }
 
-            // 2. Two-Way Synced Minecraft In-Game Options (`options.txt`)
+            // 2. Compact Two-Way Minecraft In-Game Options (`options.txt`)
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Minecraft In-Game Settings Sync (options.txt)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Minecraft In-Game Sync (options.txt)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        CompactDropdownSelector(
+                            label = "GUI Scale",
+                            selectedItem = config.mcGuiScale,
+                            options = listOf(0, 1, 2, 3, 4),
+                            itemLabel = { if (it == 0) "Auto" else "${it}x" },
+                            onSelect = { onConfigChange(config.copy(mcGuiScale = it)) },
+                            modifier = Modifier.width(145.dp)
+                        )
+                    }
 
-                    Text("Render Distance: ${config.mcRenderDistance} Chunks | Simulation Distance: ${config.mcSimulationDistance} Chunks", fontSize = 12.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Render: ${config.mcRenderDistance} Chunks • Simulation: ${config.mcSimulationDistance} Chunks • Max FPS: ${if (config.mcMaxFps >= 260) "Unlimited" else config.mcMaxFps}",
+                        fontSize = 11.sp
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         Slider(
                             value = config.mcRenderDistance.toFloat(),
                             onValueChange = { onConfigChange(config.copy(mcRenderDistance = it.toInt())) },
@@ -1144,140 +1830,59 @@ private fun CleanSettingsViewport(
                             valueRange = 5f..32f,
                             modifier = Modifier.weight(1f)
                         )
-                    }
-
-                    Text("Max Framerate: ${if (config.mcMaxFps >= 260) "Unlimited (260)" else "${config.mcMaxFps} FPS"} | GUI Scale: ${if (config.mcGuiScale == 0) "Auto" else "${config.mcGuiScale}x"}", fontSize = 12.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         Slider(
                             value = config.mcMaxFps.toFloat(),
                             onValueChange = { onConfigChange(config.copy(mcMaxFps = (it.toInt() / 10) * 10)) },
                             valueRange = 30f..260f,
                             modifier = Modifier.weight(1f)
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            (0..4).forEach { gs ->
-                                FilterChip(
-                                    selected = config.mcGuiScale == gs,
-                                    onClick = { onConfigChange(config.copy(mcGuiScale = gs)) },
-                                    label = { Text(if (gs == 0) "Auto" else "${gs}x", fontSize = 10.sp) }
-                                )
-                            }
-                        }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = config.mcVsync,
-                            onClick = { onConfigChange(config.copy(mcVsync = !config.mcVsync)) },
-                            label = { Text("VSync (${if (config.mcVsync) "ON" else "OFF"})", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = config.mcFullscreen,
-                            onClick = { onConfigChange(config.copy(mcFullscreen = !config.mcFullscreen)) },
-                            label = { Text("Fullscreen (${if (config.mcFullscreen) "ON" else "OFF"})", fontSize = 11.sp) }
-                        )
-                    }
-                }
-            }
-
-            // 3. Input Host, Touch Keypad (`horizon-keypad.json`) & Screen Orientation
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Input Mode & Touch Controls", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        HorizonInputHost.entries.forEach { mode ->
-                            FilterChip(
-                                selected = config.inputHost == mode,
-                                onClick = { onConfigChange(config.copy(inputHost = mode)) },
-                                label = { Text(mode.label, fontSize = 11.sp) }
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilterChip(
                             selected = config.keypadControls,
                             onClick = { onConfigChange(config.copy(keypadControls = !config.keypadControls)) },
-                            label = { Text("On-Screen Touch Keypad (${if (config.keypadControls) "Enabled" else "Disabled"})", fontSize = 11.sp) }
+                            label = { Text("Touch Keypad", fontSize = 11.sp) }
                         )
-                        OutlinedButton(
-                            onClick = { HorizonNativeBridge.resetTouchKeypadLayout(context, config) },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Reset Keypad Layout", fontSize = 11.sp)
-                        }
-                    }
-
-                    Text("Screen Orientation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        HorizonOrientation.entries.forEach { orient ->
-                            FilterChip(
-                                selected = config.orientation == orient,
-                                onClick = { onConfigChange(config.copy(orientation = orient)) },
-                                label = { Text(orient.label, fontSize = 11.sp) }
-                            )
-                        }
+                        FilterChip(
+                            selected = config.mcVsync,
+                            onClick = { onConfigChange(config.copy(mcVsync = !config.mcVsync)) },
+                            label = { Text("VSync", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = config.mcFullscreen,
+                            onClick = { onConfigChange(config.copy(mcFullscreen = !config.mcFullscreen)) },
+                            label = { Text("Fullscreen", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = config.enableSystemLog,
+                            onClick = { onConfigChange(config.copy(enableSystemLog = !config.enableSystemLog)) },
+                            label = { Text("System Logs", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = config.recordPerformance,
+                            onClick = { onConfigChange(config.copy(recordPerformance = !config.recordPerformance)) },
+                            label = { Text("Perf Telemetry", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = config.useDynamicColor,
+                            onClick = { onConfigChange(config.copy(useDynamicColor = !config.useDynamicColor)) },
+                            label = { Text("Material You", fontSize = 11.sp) }
+                        )
                     }
                 }
             }
 
-            // 4. Profile Slot, Content Catalog Source (Horizon / Modrinth), Server & Proxy
+            // 3. Compact Server, Proxy & Quick Actions
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Game Profile Slot", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            (0..3).forEach { slot ->
-                                FilterChip(
-                                    selected = config.profile == slot,
-                                    onClick = { onConfigChange(config.copy(profile = slot)) },
-                                    label = { Text(if (slot == 0) "Default (0)" else "Profile $slot", fontSize = 11.sp) }
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Shader & Mod Catalog Source", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            HorizonContentOrigin.entries.forEach { origin ->
-                                FilterChip(
-                                    selected = config.shaderSource == origin,
-                                    onClick = { onConfigChange(config.copy(shaderSource = origin, modSource = origin)) },
-                                    label = { Text(origin.label, fontSize = 11.sp) }
-                                )
-                            }
-                        }
-                    }
-
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = config.defaultServer,
@@ -1289,63 +1894,51 @@ private fun CleanSettingsViewport(
                         OutlinedTextField(
                             value = config.proxy,
                             onValueChange = { onConfigChange(config.copy(proxy = it)) },
-                            label = { Text("HTTP/SOCKS5 Proxy (Optional)", fontSize = 11.sp) },
+                            label = { Text("HTTP/SOCKS5 Proxy", fontSize = 11.sp) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
                     }
-                }
-            }
 
-            // 5. Diagnostics, Performance Export, Audio Safe Mode & Material You Theme
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Diagnostics, Telemetry & Theme", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.horizontalScroll(rememberScrollState())
                     ) {
-                        FilterChip(
-                            selected = config.enableSystemLog,
-                            onClick = { onConfigChange(config.copy(enableSystemLog = !config.enableSystemLog)) },
-                            label = { Text("System Logs", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = config.recordPerformance,
-                            onClick = { onConfigChange(config.copy(recordPerformance = !config.recordPerformance)) },
-                            label = { Text("Record Perf Telemetry", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = config.disableAudioSafeMode,
-                            onClick = { onConfigChange(config.copy(disableAudioSafeMode = !config.disableAudioSafeMode)) },
-                            label = { Text("Audio Safe Mode", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = config.useDynamicColor,
-                            onClick = { onConfigChange(config.copy(useDynamicColor = !config.useDynamicColor)) },
-                            label = { Text("Material You (Android 12+)", fontSize = 11.sp) }
-                        )
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { HorizonNativeBridge.exportPerformanceReport(context, config.profile) }) {
-                            Icon(Icons.Default.Analytics, contentDescription = null, modifier = Modifier.size(15.dp))
+                        OutlinedButton(
+                            onClick = { HorizonNativeBridge.resetTouchKeypadLayout(context, config) },
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Export Performance", fontSize = 11.sp)
+                            Text("Reset Keypad", fontSize = 11.sp)
                         }
-                        OutlinedButton(onClick = { HorizonNativeBridge.openSystemFilesApp(context) }) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(15.dp))
+                        OutlinedButton(
+                            onClick = { HorizonNativeBridge.exportPerformanceReport(context, config.profile) },
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Analytics, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Open Data Folder", fontSize = 11.sp)
+                            Text("Export Perf", fontSize = 11.sp)
                         }
-                        OutlinedButton(onClick = onOpenLogs) {
-                            Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(15.dp))
+                        OutlinedButton(
+                            onClick = { HorizonNativeBridge.openSystemFilesApp(context) },
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Open System Log", fontSize = 11.sp)
+                            Text("Data Folder", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onOpenLogs,
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("System Log", fontSize = 11.sp)
                         }
                     }
                 }
@@ -1367,12 +1960,12 @@ private fun ZalithLaunchSidebar(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
         modifier = Modifier
             .fillMaxHeight()
-            .width(192.dp)
+            .width(184.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
+                .padding(11.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Surface(
@@ -1390,7 +1983,7 @@ private fun ZalithLaunchSidebar(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.primaryContainer)
                     ) {
@@ -1398,7 +1991,7 @@ private fun ZalithLaunchSidebar(
                             Icons.Default.Person,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -1427,7 +2020,7 @@ private fun ZalithLaunchSidebar(
                         .animatedPressScale(onClick = onOpenVersions)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1435,10 +2028,13 @@ private fun ZalithLaunchSidebar(
                             Text("Minecraft 26.3", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             Text(
                                 text = if (installStatus.ready) "Ready"
+                                else if (installStatus.paused) "Paused (${installStatus.percent}%)"
                                 else if (installStatus.running) "${installStatus.percent}% (${installStatus.speedText.ifBlank { "Downloading" }})"
                                 else "Needs Download",
                                 fontSize = 11.sp,
-                                color = if (installStatus.ready) Color(0xFF66BB6A) else MaterialTheme.colorScheme.primary,
+                                color = if (installStatus.ready) Color(0xFF66BB6A)
+                                else if (installStatus.paused) Color(0xFFFFB74D)
+                                else MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1464,8 +2060,8 @@ private fun ZalithLaunchSidebar(
                     color = if (installStatus.running) MaterialTheme.colorScheme.surface else btnColor,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .animatedPressScale(enabled = !installStatus.running, onClick = onLaunchOrDownload)
+                        .height(48.dp)
+                        .animatedPressScale(onClick = onLaunchOrDownload)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize(),
@@ -1480,7 +2076,8 @@ private fun ZalithLaunchSidebar(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (installStatus.running) "${installStatus.percent}%"
+                            text = if (installStatus.paused) "PAUSED"
+                            else if (installStatus.running) "${installStatus.percent}%"
                             else if (installStatus.ready) "PLAY"
                             else "INSTALL",
                             fontWeight = FontWeight.ExtraBold,
@@ -1518,7 +2115,7 @@ private fun SystemLogModal(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("System & Game Log (v1.9)", style = MaterialTheme.typography.titleMedium)
+                Text("System & Game Log (v${HorizonNativeBridge.INSTALLED_LAUNCHER_VERSION})", style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         onClick = {
