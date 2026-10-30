@@ -116,8 +116,7 @@ data class HorizonDynamicPalette(
     val mutedSubtitleText: Color = Color(0xFF9EA8B0)
 )
 
-@Volatile
-private var activeUiPalette = HorizonDynamicPalette()
+private var activeUiPalette by mutableStateOf(HorizonDynamicPalette())
 
 private val LauncherRootBg: Color get() = activeUiPalette.rootBg
 private val CardSlateBg: Color get() = activeUiPalette.cardSlateBg

@@ -186,7 +186,7 @@ enum class BuiltInSkinPreset(
 
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.16"
+    const val INSTALLED_LAUNCHER_VERSION = "1.17"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
@@ -1250,7 +1250,7 @@ object HorizonNativeBridge {
                     hmodFile.writeText(obj.toString(2))
 
                     // Also sync `horizon-mods.txt` (`mod.<id>:true` / `false`) as used by horizon-client 26.3!
-                    val modId = fileName.substringBeforeLast('.').replace(Regex("""-\d+\.\d+.*$"""), "")
+                    val modId = fileName.substringBeforeLast('.').replace(Regex("-\\d+\\.\\d+.*"), "")
                     val hmodsTxt = File(dir, "horizon-mods.txt")
                     val lines = if (hmodsTxt.exists()) hmodsTxt.readLines().toMutableList() else mutableListOf()
                     val prefix = "mod.$modId:"
@@ -1264,9 +1264,7 @@ object HorizonNativeBridge {
                     if (!foundLine) {
                         updatedLines.add("$prefix$enabled")
                     }
-                    hmodsTxt.writeText(updatedLines.joinToString("
-") + "
-")
+                    hmodsTxt.writeText(updatedLines.joinToString("\n") + "\n")
                 }
                 "shaderpacks" -> {
                     val optFile = File(dir, "options.txt")
@@ -2867,7 +2865,7 @@ object HorizonNativeBridge {
 
     fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
         return try {
-            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 16, 0)
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 17, 0)
             val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000
                 readTimeout = 8000
@@ -2975,7 +2973,7 @@ object HorizonNativeBridge {
         fun parseAndAdd(rawLine: String, defaultSource: String) {
             val trimmed = rawLine.trim()
             if (trimmed.isEmpty() || trimmed.startsWith("---")) return
-            val tsMatch = Regex("""^\[(\d{2}:\d{2}:\d{2})]\s*(.*)$""").find(trimmed)
+            val tsMatch = Regex("^\\[(\\d{2}:\\d{2}:\\d{2})]\\s*(.*)$").find(trimmed)
             val ts = tsMatch?.groupValues?.get(1) ?: SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
             val body = tsMatch?.groupValues?.get(2) ?: trimmed
 
