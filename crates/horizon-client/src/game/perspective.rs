@@ -1192,6 +1192,7 @@ mod preview_tests {
             entity_tags: Default::default(),
             villager_hats: Default::default(),
             pois: Default::default(),
+            species_placements: Default::default(),
         };
         let draw = |body: bool| {
             let mut out = Vec::new();

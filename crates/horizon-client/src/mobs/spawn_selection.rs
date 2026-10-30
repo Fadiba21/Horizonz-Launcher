@@ -1209,14 +1209,18 @@ fn valid_position_for_type<L: NaturalLevel, R: RandomSource>(
         return false;
     }
     let [x, y, z] = pos;
+    // `canSpawnMobAt` comes first in vanilla, but it and `isSpawnPositionOk`
+    // only read the level, so their order cannot change the answer: the few
+    // block reads of the placement turn most positions away before the spawn
+    // list (structures, biome) is looked up again.
+    if !spawn_rules::is_spawn_position_ok(species, l, x, y, z) {
+        return false;
+    }
     if !listed
         && !mobs_at(l, category, x, y, z)
             .iter()
             .any(|e| same_spawner(e, entry))
     {
-        return false;
-    }
-    if !spawn_rules::is_spawn_position_ok(species, l, x, y, z) {
         return false;
     }
     if !spawn_rules::check_spawn_rules(species, l, Reason::Natural, random, x, y, z) {
