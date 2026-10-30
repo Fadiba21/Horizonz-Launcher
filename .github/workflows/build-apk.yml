@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.8 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.9 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.8 Patches
+      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.9 Patches
         run: |
           rm -rf /tmp/horizon-upstream
           git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
@@ -149,7 +149,7 @@ jobs:
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v18-${{ matrix.rust_target }}
+          key: horizon-real-engine-v19-${{ matrix.rust_target }}
 
       - name: Compile Real Horizon Rust Engine (libhorizon_android.so), Prestage 60 Touch Controls & Real HD Wallpapers (${{ matrix.abi }})
         run: |
@@ -167,11 +167,13 @@ jobs:
             rm -rf /tmp/upstream_assets.apk /tmp/upstream_assets_dir
           fi
 
-          # Prestage all 60 Bedrock Touch Control icons into engine-data.zip AND fetch real HD 16:9 Minecraft wallpapers!
           python3 scripts/prestage_controls_and_wallpapers.py
 
           TOOLCHAIN_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$TOOLCHAIN_BIN:$PATH"
           export HORIZON_ANDROID_PUBLIC=1
+          export HORIZON_ANDROID_BUILD_COMMIT="$(git rev-parse --short=12 HEAD 2>/dev/null || echo 'horizonz19')"
+          export HORIZON_ANDROID_BUILD_DIRTY="false"
           export CARGO_PROFILE_RELEASE_LTO=false
           export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
           export CARGO_PROFILE_RELEASE_OPT_LEVEL=2
@@ -183,11 +185,19 @@ jobs:
           export "AR_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/llvm-ar"
           export "CARGO_TARGET_${TRIPLE_UPPER}_LINKER=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
 
+          EXTRA_CARGO_ARGS=""
+          if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then
+            EXTRA_CARGO_ARGS="--no-default-features --features audio"
+          fi
+
           set +e
-          cargo build --release -p horizon-android --target ${{ matrix.rust_target }} 2>&1 | tee cargo_build.log
+          cargo build --release -p horizon-android --target ${{ matrix.rust_target }} $EXTRA_CARGO_ARGS 2>&1 | tee cargo_build.log
           CARGO_EXIT=${PIPESTATUS[0]}
           set -e
           if [ "$CARGO_EXIT" -ne 0 ]; then
+            grep -E "^error" cargo_build.log | head -n 10 | while IFS= read -r err_line; do
+              echo "::error::[Rust ${{ matrix.abi }}] $err_line"
+            done
             echo "### Rust Cargo Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
             tail -n 120 cargo_build.log >> "$GITHUB_STEP_SUMMARY"
@@ -215,6 +225,9 @@ jobs:
           GRADLE_EXIT=${PIPESTATUS[0]}
           set -e
           if [ "$GRADLE_EXIT" -ne 0 ]; then
+            grep -E "e: |FAILURE:" gradle_build.log | head -n 10 | while IFS= read -r err_line; do
+              echo "::error::[Gradle ${{ matrix.abi }}] $err_line"
+            done
             echo "### Gradle Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
             tail -n 120 gradle_build.log >> "$GITHUB_STEP_SUMMARY"
@@ -223,18 +236,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.8-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.9-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.8-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.8-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.9-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.9-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.8 Release APKs
+    name: Publish HorizonZ 1.9 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -254,16 +267,14 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.8 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
+          tag_name: v1.9.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.9 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
           body: |
-            ## HorizonZ - Launcher v1.8
+            ## HorizonZ - Launcher v1.9
+            - **Fixed Rust `error[E0753]` Inner Doc Comment Placement**: Places `static GAME_LAUNCHED_ONCE` after module `//!` doc comments and `use` imports right above `struct Launcher` in `launcher.rs`, and configures `armeabi-v7a` `--no-default-features --features audio` matching upstream `tools/android_build.py`.
             - **Fixed Touch Controls 17/60 Stall (`5/6 Preparing Touch Controls`)**: Pre-bundles all 60 Bedrock touch control icons into `engine-data.zip` during CI build AND patches `controls_with_progress` in `android_resources.rs` with 6s/10s timeouts, jsDelivr CDN mirror fallback, and safe PNG fallback.
-            - **Background Download + Live Android System Notification**: Added `HorizonDownloadService` (`foregroundServiceType="dataSync"`) so asset downloads continue in the background when the launcher is minimized and display live percentage, stage, download speed (`MB/s`), and URL in the phone's notification bar.
-            - **Verbose Download Process Log**: Displays exact download URLs (`piston-meta.mojang.com`, `resources.download.minecraft.net`, `raw.githubusercontent.com/Mojang/bedrock-samples`), byte progress (`MB / MB`), and live download speed (`MB/s` / `KB/s`).
-            - **Complete Settings & Runtime Sync**: Fixed `"open-gl"` serde key for `catalog.rs`, synced `horizon-keypad.json` (`enabled`), added two-way `options.txt` sync (`renderDistance`, `simulationDistance`, `maxFps`, `guiScale`, `enableVsync`, `fullscreen`), and added local Mod/Shader/ResourcePack toggle switches.
-            - **Guaranteed Clean Game Exit to Launcher**: Added single-shot `GAME_LAUNCHED_ONCE` guard in `launcher.rs`, `zalith-game-exited.flag` UI-thread finish watchdog, and one-time `zalith-launch-token.txt` in `HorizonActivity.java` so quitting Minecraft never re-enters Minecraft.
-            - **Real Web HD 16:9 Minecraft Wallpapers + Clearable System Logs**: Fetches 12 real 1080p Minecraft update & shader wallpapers from `Lxtharia/minegrub-theme` and `usman-369/wallpapers` cropped to 1280x720 (16:9), plus supports custom wallpaper import from gallery.
+            - **Background Download + Live Android System Notification**: Added `HorizonDownloadService` (`foregroundServiceType="dataSync"`) so asset downloads continue in the background when minimized and show live percentage, stage, download speed (`MB/s`), and URL in the phone's notification bar.
+            - **Complete Settings & Runtime Sync + Guaranteed Clean Game Exit**: Fixed `"open-gl"` serde key for `catalog.rs`, synced `horizon-keypad.json` and two-way `options.txt`, and added 3-layer exit lock (`GAME_LAUNCHED_ONCE` + `zalith-game-exited.flag` + `zalith-launch-token.txt`).
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt

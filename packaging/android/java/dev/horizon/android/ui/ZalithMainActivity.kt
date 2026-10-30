@@ -1518,7 +1518,7 @@ private fun SystemLogModal(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("System & Game Log (v1.8)", style = MaterialTheme.typography.titleMedium)
+                Text("System & Game Log (v1.9)", style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         onClick = {

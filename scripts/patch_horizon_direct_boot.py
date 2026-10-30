@@ -5,7 +5,7 @@ from pathlib import Path
 
 # ==============================================================================
 # 1. Patch crates/horizon-client/src/android/launcher_pages.rs:
-#    Bypass `draw_pages` at runtime using an env-var check so `Horizon Android 0.7.4` UI
+#    Bypass `draw_pages` at runtime using an env-var check so `Horizon Android 0.7.5` UI
 #    is NEVER drawn while keeping 100% of `launcher_pages.rs` reachable to the compiler!
 # ==============================================================================
 pages_rs = Path("crates/horizon-client/src/android/launcher_pages.rs")
@@ -23,19 +23,22 @@ if pages_rs.exists():
 
 # ==============================================================================
 # 2. Patch crates/horizon-client/src/android/launcher.rs:
-#    - Add `static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool`
-#    - Match the full `fn resumed` block (so it never collides with `fn restore_launcher`)
+#    - Place `static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool` right above
+#      `pub(super) struct Launcher {` (AFTER all `//!` inner doc comments and `use` imports!)
 #    - Match the tail of `fn restore_launcher` to write `zalith-game-exited.flag` and call `events.exit()`
+#    - Match the full `fn resumed` block with `GAME_LAUNCHED_ONCE` single-shot direct boot
 # ==============================================================================
 launcher_rs = Path("crates/horizon-client/src/android/launcher.rs")
 if launcher_rs.exists():
     txt = launcher_rs.read_text(encoding="utf-8")
 
-    if "GAME_LAUNCHED_ONCE" not in txt:
-        txt = (
-            "static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\n"
-            + txt
-        )
+    old_struct = "pub(super) struct Launcher {"
+    new_struct = '''static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(super) struct Launcher {'''
+    if old_struct in txt and "GAME_LAUNCHED_ONCE" not in txt:
+        txt = txt.replace(old_struct, new_struct, 1)
+        print("[HorizonZ Patch] Inserted GAME_LAUNCHED_ONCE above struct Launcher (after //! doc comments)!")
 
     # (a) Patch `restore_launcher` tail FIRST (before `resumed`) so quitting Minecraft exits cleanly instead of reopening!
     old_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
@@ -73,7 +76,7 @@ if launcher_rs.exists():
             events.exit();
             return;
         }
-        self.catalog = crate::catalog::Catalog::new(&self.home);
+        self.catalog.refresh(&self.home);
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
@@ -187,7 +190,7 @@ if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.8 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
+// === HorizonZ 1.9 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -351,8 +354,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
         print("[HorizonZ Patch] Added JNI official_install hooks & verbose URL/speed logger to android_main.rs!")
 
 # ==============================================================================
-# 5. Automatically run scripts/prestage_controls_and_wallpapers.py so it executes
-#    even if GITHUB_TOKEN skipped updating .github/workflows/build-apk.yml!
+# 5. Automatically run scripts/prestage_controls_and_wallpapers.py
 # ==============================================================================
 prestage_script = Path("scripts/prestage_controls_and_wallpapers.py")
 if prestage_script.exists():
