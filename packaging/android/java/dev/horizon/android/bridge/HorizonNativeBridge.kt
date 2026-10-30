@@ -4,6 +4,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Process
 import android.provider.DocumentsContract
@@ -21,14 +28,15 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 data class AssetInstallStatus(
     val ready: Boolean = false,
@@ -60,13 +68,121 @@ data class StoreDownloadProgress(
     val statusText: String = ""
 )
 
+enum class LogCategoryFilter(val label: String) {
+    ALL("All Logs"),
+    LAUNCHER("Launcher"),
+    DOWNLOADER("Downloader"),
+    ENGINE("Game Engine")
+}
+
+enum class LogSeverityFilter(val label: String) {
+    ALL("ALL"),
+    INFO("INFO"),
+    DL("DL"),
+    WARN("WARN"),
+    ERR("ERR")
+}
+
+data class StructuredLogEntry(
+    val id: Int,
+    val timestamp: String,
+    val severity: LogSeverityFilter,
+    val sourceTag: String,
+    val message: String
+)
+
+enum class BuiltInSkinPreset(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val slimModel: Boolean,
+    val skinTone: Int,
+    val hairColor: Int,
+    val eyeColor: Int,
+    val shirtPrimary: Int,
+    val shirtSecondary: Int,
+    val pantsColor: Int,
+    val bootsColor: Int
+) {
+    CLASSIC_STEVE(
+        "classic_steve",
+        "Classic Steve",
+        "Wide 4px Arms • Standard Java 26.3",
+        false,
+        0xFFB58463.toInt(),
+        0xFF422818.toInt(),
+        0xFF3E4EB8.toInt(),
+        0xFF0099A8.toInt(),
+        0xFF007A87.toInt(),
+        0xFF38388E.toInt(),
+        0xFF4F4F4F.toInt()
+    ),
+    SLIM_ALEX(
+        "slim_alex",
+        "Slim Alex",
+        "Slim 3px Arms • Agile Explorer",
+        true,
+        0xFFE8B998.toInt(),
+        0xFFC96A28.toInt(),
+        0xFF2E6F40.toInt(),
+        0xFF558B2F.toInt(),
+        0xFF33691E.toInt(),
+        0xFF5D4037.toInt(),
+        0xFF424242.toInt()
+    ),
+    HORIZON_KNIGHT(
+        "horizon_knight",
+        "HorizonZ Cyber Knight",
+        "Wide 4px Arms • Sky-Blue Neon Armor",
+        false,
+        0xFFD7A98C.toInt(),
+        0xFF1A242B.toInt(),
+        0xFF00E5FF.toInt(),
+        0xFF1E323C.toInt(),
+        0xFF8BE0FF.toInt(),
+        0xFF152026.toInt(),
+        0xFF00ACC1.toInt()
+    ),
+    NETHERITE_SOVEREIGN(
+        "netherite_sovereign",
+        "Netherite Sovereign",
+        "Wide 4px Arms • Crimson & Gold Trim",
+        false,
+        0xFFC59372.toInt(),
+        0xFF2B1D1E.toInt(),
+        0xFFFF7043.toInt(),
+        0xFF372C30.toInt(),
+        0xFFFFB300.toInt(),
+        0xFF241D20.toInt(),
+        0xFF8D2828.toInt()
+    ),
+    EMERALD_RANGER(
+        "emerald_ranger",
+        "Emerald Ranger",
+        "Slim 3px Arms • Overworld Stealth Cloak",
+        true,
+        0xFFE0B190.toInt(),
+        0xFF2E1E12.toInt(),
+        0xFF00E676.toInt(),
+        0xFF1B5E20.toInt(),
+        0xFF66BB6A.toInt(),
+        0xFF263238.toInt(),
+        0xFF3E2723.toInt()
+    )
+}
+
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.11"
+    const val INSTALLED_LAUNCHER_VERSION = "1.12"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    private val VANILLA_PLAYER_SKIN_NAMES = listOf(
+        "steve.png", "alex.png", "ari.png", "efe.png", "kai.png",
+        "makena.png", "noor.png", "sunny.png", "zuri.png"
+    )
 
     val storeDownloadPaused = AtomicBoolean(false)
     val storeDownloadCancelled = AtomicBoolean(false)
@@ -173,6 +289,7 @@ object HorizonNativeBridge {
             "horizon-mods",
             "profiles",
             "logs",
+            "skins",
             "custom_wallpapers",
             ".local/horizon-client/26.3"
         ).forEach { sub ->
@@ -205,7 +322,449 @@ object HorizonNativeBridge {
     }
 
     // ========================================================================
-    // PERSISTENT ACCOUNTS SYSTEM
+    // CUSTOM SKIN ENGINE: PHOTO/PNG SKIN DETECTION, PRESETS, & IN-GAME SYNC
+    // ========================================================================
+
+    fun loadOrGenerateAccountSkinBitmap(context: Context, account: ZalithAccount): Bitmap {
+        if (account.skinPath.isNotBlank()) {
+            val file = File(account.skinPath)
+            if (file.isFile && file.length() > 64L) {
+                val decoded = BitmapFactory.decodeFile(file.absolutePath)
+                if (decoded != null) return decoded
+            }
+        }
+        val activeFile = File(ensureHomeDirectories(context), "custom_skin_active.png")
+        if (activeFile.isFile && activeFile.length() > 64L) {
+            val decoded = BitmapFactory.decodeFile(activeFile.absolutePath)
+            if (decoded != null) return decoded
+        }
+        val preset = if (account.slimSkinModel) BuiltInSkinPreset.SLIM_ALEX else BuiltInSkinPreset.CLASSIC_STEVE
+        return generatePresetSkinBitmap(preset)
+    }
+
+    fun generatePresetSkinBitmap(preset: BuiltInSkinPreset): Bitmap {
+        val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(Color.TRANSPARENT)
+        val canvas = Canvas(bmp)
+        val p = Paint().apply { isAntiAlias = false; style = Paint.Style.FILL }
+
+        fun fillRect(x: Int, y: Int, w: Int, h: Int, color: Int) {
+            p.color = color
+            canvas.drawRect(x.toFloat(), y.toFloat(), (x + w).toFloat(), (y + h).toFloat(), p)
+        }
+
+        // 1. Head cube net (8x8x8 at 0,0)
+        fillRect(8, 0, 8, 8, preset.hairColor) // Top
+        fillRect(16, 0, 8, 8, preset.skinTone) // Bottom
+        fillRect(0, 8, 8, 8, preset.skinTone)  // Right
+        fillRect(8, 8, 8, 8, preset.skinTone)  // Front face
+        fillRect(16, 8, 8, 8, preset.skinTone) // Left
+        fillRect(24, 8, 8, 8, preset.hairColor) // Back
+
+        // Hairline on front & sides
+        fillRect(8, 8, 8, 2, preset.hairColor)
+        fillRect(8, 10, 1, 2, preset.hairColor)
+        fillRect(15, 10, 1, 2, preset.hairColor)
+        fillRect(0, 8, 8, 3, preset.hairColor)
+        fillRect(16, 8, 8, 3, preset.hairColor)
+
+        // Eyes (whites + irises)
+        fillRect(9, 12, 1, 1, Color.WHITE)
+        fillRect(10, 12, 1, 1, preset.eyeColor)
+        fillRect(13, 12, 1, 1, preset.eyeColor)
+        fillRect(14, 12, 1, 1, Color.WHITE)
+
+        // Nose / Mouth
+        fillRect(11, 13, 2, 1, darkenColor(preset.skinTone, 0.85f))
+        fillRect(11, 14, 2, 1, darkenColor(preset.skinTone, 0.72f))
+
+        // Hat / Helmet outer layer (32,0)
+        fillRect(40, 8, 8, 2, darkenColor(preset.hairColor, 1.12f))
+
+        // 2. Torso / Body (16,16)
+        fillRect(20, 16, 8, 4, preset.shirtPrimary) // Top
+        fillRect(28, 16, 8, 4, preset.shirtSecondary) // Bottom
+        fillRect(16, 20, 24, 12, preset.shirtPrimary) // Sides, Front, Back
+        // Chest accent detail on front torso (20,20)-(28,32)
+        fillRect(22, 20, 4, 2, preset.shirtSecondary)
+        fillRect(21, 23, 6, 3, preset.shirtSecondary)
+
+        // 3. Right Leg (0,16) & Left Leg (16,48)
+        fillRect(4, 16, 4, 4, preset.pantsColor)
+        fillRect(0, 20, 16, 9, preset.pantsColor)
+        fillRect(0, 29, 16, 3, preset.bootsColor)
+
+        fillRect(20, 48, 4, 4, preset.pantsColor)
+        fillRect(16, 52, 16, 9, preset.pantsColor)
+        fillRect(16, 61, 16, 3, preset.bootsColor)
+
+        // 4. Right Arm (40,16) & Left Arm (32,48)
+        val armW = if (preset.slimModel) 3 else 4
+        val armTotalW = if (preset.slimModel) 14 else 16
+        fillRect(44, 16, armW, 4, preset.shirtPrimary)
+        fillRect(40, 20, armTotalW, 8, preset.shirtPrimary)
+        fillRect(40, 28, armTotalW, 4, preset.skinTone)
+
+        fillRect(36, 48, armW, 4, preset.shirtPrimary)
+        fillRect(32, 52, armTotalW, 8, preset.shirtPrimary)
+        fillRect(32, 60, armTotalW, 4, preset.skinTone)
+
+        return bmp
+    }
+
+    private fun darkenColor(color: Int, factor: Float): Int {
+        val a = Color.alpha(color)
+        val r = (Color.red(color) * factor).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) * factor).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) * factor).toInt().coerceIn(0, 255)
+        return Color.argb(a, r, g, b)
+    }
+
+    /**
+     * Detects and imports a Minecraft Skin from any Gallery Photo or PNG file:
+     * 1. If the image is a 64x64 (or 1:1 square UV skin with transparent background corners),
+     *    imports it directly as a 64x64 UV skin and auto-detects Wide (4px) vs Slim (3px) arms.
+     * 2. If the image is a legacy 64x32 (2:1 aspect ratio) skin, converts it to modern 64x64
+     *    format by mirroring/copying the arms and legs to the lower 32px half.
+     * 3. If the image is a regular photo/picture (opaque non-UV image), runs our Smart Photo-to-Skin
+     *    Generator that maps the photo's face & outfit palette onto a valid 64x64 Minecraft player UV net!
+     */
+    fun detectAndImportSkinFromUri(
+        context: Context,
+        uri: Uri,
+        account: ZalithAccount,
+        config: HorizonConfigState
+    ): SkinDetectionResult {
+        return try {
+            val rawBmp = context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            } ?: return SkinDetectionResult(false, null, account.slimSkinModel, "", "Gagal membaca gambar dari penyimpanan.")
+
+            val w = rawBmp.width
+            val h = rawBmp.height
+            val skinsDir = File(ensureHomeDirectories(context), "skins").apply { mkdirs() }
+            val outFile = File(skinsDir, "skin_${account.id}_${System.currentTimeMillis()}.png")
+
+            val finalBitmap: Bitmap
+            val detectedSlim: Boolean
+            val sourceLabel: String
+            val detailMsg: String
+
+            // Check if image is a 2:1 legacy Minecraft skin (e.g., 64x32, 128x64)
+            if (w == h * 2 && w >= 64 && isLikelyUvSkin(rawBmp, isLegacy = true)) {
+                val scaled32 = Bitmap.createScaledBitmap(rawBmp, 64, 32, false)
+                finalBitmap = convertLegacy64x32To64x64(scaled32)
+                detectedSlim = detectSlimArmsFrom64x64(finalBitmap)
+                sourceLabel = "Legacy Skin 64×32 → 64×64"
+                detailMsg = "Skin Legacy (${w}×${h}) terdeteksi & dikonversi otomatis ke format Minecraft 26.3 (64×64)!"
+            } else if (w == h && w >= 64 && isLikelyUvSkin(rawBmp, isLegacy = false)) {
+                // Standard 64x64 or HD square Minecraft UV skin
+                finalBitmap = if (w == 64 && h == 64) {
+                    rawBmp.copy(Bitmap.Config.ARGB_8888, true)
+                } else {
+                    Bitmap.createScaledBitmap(rawBmp, 64, 64, false)
+                }
+                detectedSlim = detectSlimArmsFrom64x64(finalBitmap)
+                val modelName = if (detectedSlim) "Slim (3px Alex)" else "Wide (4px Steve)"
+                sourceLabel = "Minecraft UV Skin (${w}×${h})"
+                detailMsg = "Skin Minecraft valid (${w}×${h}) terdeteksi! Model lengan otomatis: $modelName."
+            } else {
+                // Regular Photo / Portrait -> Smart Photo-to-Minecraft-Skin Generator!
+                finalBitmap = convertRegularPhotoToMinecraftSkin64x64(rawBmp, account.slimSkinModel)
+                detectedSlim = account.slimSkinModel
+                sourceLabel = "Photo-to-Skin (${w}×${h} → 64×64)"
+                detailMsg = "Foto (${w}×${h}) berhasil dideteksi & diubah menjadi tekstur karakter Skin Minecraft 64×64!"
+            }
+
+            FileOutputStream(outFile).use { fos ->
+                finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+            }
+
+            syncActiveSkinToGameEngine(context, outFile, detectedSlim, config.profile, config.enableSystemLog)
+            SkinDetectionResult(
+                success = true,
+                skinFile = outFile,
+                slimModel = detectedSlim,
+                sourceLabel = sourceLabel,
+                message = detailMsg
+            )
+        } catch (e: Exception) {
+            appendSystemLog("Skin detection error: ${e.message}", config.enableSystemLog, context)
+            SkinDetectionResult(false, null, account.slimSkinModel, "", "Error mendeteksi skin: ${e.message}")
+        }
+    }
+
+    private fun isLikelyUvSkin(bmp: Bitmap, isLegacy: Boolean): Boolean {
+        if (!bmp.hasAlpha()) {
+            // Standard 64x64 or 64x32 PNG skins might occasionally be saved without alpha in top-left if black/white,
+            // so check if dimensions are exact 64x64 or 64x32 AND top-left (0,0)-(7,7) is uniform
+            if ((bmp.width == 64 && bmp.height == 64) || (isLegacy && bmp.width == 64 && bmp.height == 32)) {
+                val c0 = bmp.getPixel(0, 0)
+                var uniform = true
+                for (y in 0..5) {
+                    for (x in 0..5) {
+                        if (bmp.getPixel(x, y) != c0) uniform = false
+                    }
+                }
+                return uniform
+            }
+            return false
+        }
+        val scale = bmp.width / 64.0f
+        var transparentCorners = 0
+        val testPoints = listOf(0 to 0, 2 to 2, 6 to 1, 60 to 1, 63 to 0)
+        for ((tx, ty) in testPoints) {
+            val px = (tx * scale).toInt().coerceIn(0, bmp.width - 1)
+            val py = (ty * scale).toInt().coerceIn(0, bmp.height - 1)
+            if (Color.alpha(bmp.getPixel(px, py)) < 30) {
+                transparentCorners++
+            }
+        }
+        return transparentCorners >= 2 || (bmp.width == 64 && (bmp.height == 64 || bmp.height == 32))
+    }
+
+    private fun detectSlimArmsFrom64x64(bmp64: Bitmap): Boolean {
+        if (bmp64.width < 64 || bmp64.height < 64) return false
+        var transparentCount = 0
+        var total = 0
+        for (y in 20..31) {
+            for (x in 54..55) {
+                total++
+                if (Color.alpha(bmp64.getPixel(x, y)) < 25) {
+                    transparentCount++
+                }
+            }
+        }
+        return transparentCount >= (total * 3) / 4
+    }
+
+    private fun convertLegacy64x32To64x64(legacy: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        out.eraseColor(Color.TRANSPARENT)
+        val canvas = Canvas(out)
+        canvas.drawBitmap(legacy, 0f, 0f, null)
+
+        // Copy Right Leg (0,16)-(16,32) to Left Leg (16,48)-(32,64)
+        copySkinRegion(legacy, out, 4, 16, 4, 4, 20, 48, flipX = true)
+        copySkinRegion(legacy, out, 8, 16, 4, 4, 24, 48, flipX = true)
+        copySkinRegion(legacy, out, 0, 20, 4, 12, 24, 52, flipX = true)
+        copySkinRegion(legacy, out, 4, 20, 4, 12, 20, 52, flipX = true)
+        copySkinRegion(legacy, out, 8, 20, 4, 12, 16, 52, flipX = true)
+        copySkinRegion(legacy, out, 12, 20, 4, 12, 28, 52, flipX = true)
+
+        // Copy Right Arm (40,16)-(56,32) to Left Arm (32,48)-(48,64)
+        copySkinRegion(legacy, out, 44, 16, 4, 4, 36, 48, flipX = true)
+        copySkinRegion(legacy, out, 48, 16, 4, 4, 40, 48, flipX = true)
+        copySkinRegion(legacy, out, 40, 20, 4, 12, 40, 52, flipX = true)
+        copySkinRegion(legacy, out, 44, 20, 4, 12, 36, 52, flipX = true)
+        copySkinRegion(legacy, out, 48, 20, 4, 12, 32, 52, flipX = true)
+        copySkinRegion(legacy, out, 52, 20, 4, 12, 44, 52, flipX = true)
+        return out
+    }
+
+    private fun copySkinRegion(
+        src: Bitmap,
+        dst: Bitmap,
+        sx: Int,
+        sy: Int,
+        w: Int,
+        h: Int,
+        dx: Int,
+        dy: Int,
+        flipX: Boolean
+    ) {
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val px = src.getPixel(sx + x, sy + y)
+                val targetX = if (flipX) dx + (w - 1 - x) else dx + x
+                dst.setPixel(targetX, dy + y, px)
+            }
+        }
+    }
+
+    /**
+     * Converts any regular photo/portrait from the user's gallery into a valid 64x64 Minecraft player skin:
+     * - Maps the central portrait region onto the 8x8 Head Front `(8,8)-(16,16)`.
+     * - Samples hair/top colors for Head Top/Sides/Back.
+     * - Maps the mid-body colors/texture onto the Torso `(16,20)-(40,32)` and Arms.
+     * - Maps the lower colors onto the Legs `(0,20)-(16,32)` and `(16,52)-(32,64)`.
+     */
+    private fun convertRegularPhotoToMinecraftSkin64x64(photo: Bitmap, slimModel: Boolean): Bitmap {
+        val sample = Bitmap.createScaledBitmap(photo, 24, 24, true)
+        val out = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        out.eraseColor(Color.TRANSPARENT)
+
+        fun opaque(c: Int): Int = Color.argb(255, Color.red(c), Color.green(c), Color.blue(c))
+
+        val hairTone = opaque(sample.getPixel(12, 2))
+        val skinTone = opaque(sample.getPixel(12, 7))
+        val shirtMain = opaque(sample.getPixel(12, 14))
+        val shirtAccent = opaque(sample.getPixel(9, 15))
+        val pantsTone = opaque(sample.getPixel(12, 20))
+        val bootsTone = darkenColor(pantsTone, 0.65f)
+
+        // Start from a clean base template with those sampled colors
+        val presetTemplate = BuiltInSkinPreset(
+            id = "photo_skin",
+            title = "Photo Skin",
+            subtitle = "",
+            slimModel = slimModel,
+            skinTone = skinTone,
+            hairColor = hairTone,
+            eyeColor = shirtAccent,
+            shirtPrimary = shirtMain,
+            shirtSecondary = shirtAccent,
+            pantsColor = pantsTone,
+            bootsColor = bootsTone
+        )
+        val base = generatePresetSkinBitmap(presetTemplate)
+        val canvas = Canvas(out)
+        canvas.drawBitmap(base, 0f, 0f, null)
+
+        // Paint the pixelated 8x8 portrait from the upper-center of the photo onto the Head Front (8,8)-(16,16)
+        // and Chest Front (20,20)-(28,32) so the photo's distinctive look is visible on the character!
+        for (y in 0 until 8) {
+            for (x in 0 until 8) {
+                val sx = (8 + x).coerceIn(0, 23)
+                val sy = (2 + y).coerceIn(0, 23)
+                out.setPixel(8 + x, 8 + y, opaque(sample.getPixel(sx, sy)))
+            }
+        }
+        // Keep crisp Minecraft eyes at (9..10, 12) and (13..14, 12)
+        out.setPixel(9, 12, Color.WHITE)
+        out.setPixel(10, 12, darkenColor(shirtAccent, 0.8f))
+        out.setPixel(13, 12, darkenColor(shirtAccent, 0.8f))
+        out.setPixel(14, 12, Color.WHITE)
+
+        // Paint pixelated torso front (20,20)-(28,32) from mid-photo (8..15, 10..21)
+        for (y in 0 until 12) {
+            for (x in 0 until 8) {
+                val sx = (8 + x).coerceIn(0, 23)
+                val sy = (10 + y).coerceIn(0, 23)
+                out.setPixel(20 + x, 20 + y, opaque(sample.getPixel(sx, sy)))
+            }
+        }
+        return out
+    }
+
+    fun applyBuiltInPresetSkin(
+        context: Context,
+        preset: BuiltInSkinPreset,
+        account: ZalithAccount,
+        config: HorizonConfigState
+    ): ZalithAccount {
+        val home = ensureHomeDirectories(context)
+        val skinsDir = File(home, "skins").apply { mkdirs() }
+        val outFile = File(skinsDir, "skin_${account.id}_${preset.id}.png")
+        val bmp = generatePresetSkinBitmap(preset)
+        FileOutputStream(outFile).use { fos ->
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, fos)
+        }
+        syncActiveSkinToGameEngine(context, outFile, preset.slimModel, config.profile, config.enableSystemLog)
+        return account.copy(
+            skinPath = outFile.absolutePath,
+            slimSkinModel = preset.slimModel,
+            skinSourceLabel = "Preset: ${preset.title}"
+        )
+    }
+
+    /**
+     * Synchronizes the active 64x64 player skin PNG directly into:
+     * 1. `filesDir/custom_skin_active.png` (read by Rust `Launcher::resumed` before `self.action(events)`).
+     * 2. All 9 vanilla 26.3 `DefaultPlayerSkin` slots in `.local/horizon-client/26.3/assets/minecraft/textures/entity/player/{wide,slim}/*.png`
+     *    (after backing up original vanilla skins to `vanilla_skins_backup/`).
+     * 3. Auto-generated resource pack `resourcepacks/HorizonZ-CustomSkin.zip` enabled in `options.txt`.
+     */
+    fun syncActiveSkinToGameEngine(
+        context: Context,
+        skinFile: File,
+        slimModel: Boolean,
+        profileSlot: Int,
+        logEnabled: Boolean
+    ) {
+        val home = ensureHomeDirectories(context)
+        val profileHome = getProfileHome(home, profileSlot)
+        if (!skinFile.isFile || skinFile.length() < 64L) return
+
+        try {
+            val activeDest = File(home, "custom_skin_active.png")
+            if (skinFile.absolutePath != activeDest.absolutePath) {
+                skinFile.copyTo(activeDest, overwrite = true)
+            }
+            File(home, "custom_skin_model.txt").writeText(if (slimModel) "slim" else "wide")
+
+            val skinBytes = activeDest.readBytes()
+            val root26 = File(home, ".local/horizon-client/26.3")
+            val entityDir = File(root26, "assets/minecraft/textures/entity")
+            val backupDir = File(root26, "vanilla_skins_backup")
+
+            listOf("player/wide", "player/slim").forEach { sub ->
+                val targetDir = File(entityDir, sub).apply { mkdirs() }
+                val bakSub = File(backupDir, sub).apply { mkdirs() }
+                VANILLA_PLAYER_SKIN_NAMES.forEach { name ->
+                    val targetFile = File(targetDir, name)
+                    val bakFile = File(bakSub, name)
+                    if (targetFile.isFile && !bakFile.exists()) {
+                        runCatching { targetFile.copyTo(bakFile, overwrite = false) }
+                    }
+                    FileOutputStream(targetFile).use { it.write(skinBytes) }
+                }
+            }
+            listOf("steve.png", "alex.png").forEach { legacy ->
+                FileOutputStream(File(entityDir.apply { mkdirs() }, legacy)).use { it.write(skinBytes) }
+            }
+
+            // Also build/update `resourcepacks/HorizonZ-CustomSkin.zip` in both home and profileHome
+            listOf(home, profileHome).forEach { base ->
+                val rpDir = File(base, "resourcepacks").apply { mkdirs() }
+                val zipFile = File(rpDir, "HorizonZ-CustomSkin.zip")
+                ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+                    val mcmeta = """
+                        {
+                          "pack": {
+                            "pack_format": 75,
+                            "supported_formats": [15, 99],
+                            "min_format": 15,
+                            "max_format": 99,
+                            "description": "HorizonZ Active Player Skin (${if (slimModel) "Slim Alex" else "Wide Steve"})"
+                          }
+                        }
+                    """.trimIndent().toByteArray(Charsets.UTF_8)
+                    zos.putNextEntry(ZipEntry("pack.mcmeta"))
+                    zos.write(mcmeta)
+                    zos.closeEntry()
+
+                    zos.putNextEntry(ZipEntry("pack.png"))
+                    zos.write(skinBytes)
+                    zos.closeEntry()
+
+                    listOf("wide", "slim").forEach { modelDir ->
+                        VANILLA_PLAYER_SKIN_NAMES.forEach { sName ->
+                            zos.putNextEntry(ZipEntry("assets/minecraft/textures/entity/player/$modelDir/$sName"))
+                            zos.write(skinBytes)
+                            zos.closeEntry()
+                        }
+                    }
+                    listOf("steve.png", "alex.png").forEach { legacy ->
+                        zos.putNextEntry(ZipEntry("assets/minecraft/textures/entity/$legacy"))
+                        zos.write(skinBytes)
+                        zos.closeEntry()
+                    }
+                }
+            }
+            setContentItemEnabled(context, "resourcepacks", "HorizonZ-CustomSkin.zip", true, profileSlot, logEnabled)
+            appendSystemLog(
+                "Applied custom skin (${skinFile.name}, model=${if (slimModel) "Slim 3px" else "Wide 4px"}) to Minecraft 26.3 engine.",
+                logEnabled,
+                context
+            )
+        } catch (e: Exception) {
+            appendSystemLog("Failed to sync custom skin to engine: ${e.message}", logEnabled, context)
+        }
+    }
+
+    // ========================================================================
+    // PERSISTENT ACCOUNTS SYSTEM (WITH SKIN METADATA)
     // ========================================================================
 
     fun loadSavedAccounts(context: Context): List<ZalithAccount> {
@@ -225,15 +784,18 @@ object HorizonNativeBridge {
                             username = obj.optString("username", "Steve"),
                             uuid = obj.optString("uuid", UUID.randomUUID().toString()),
                             accountType = type,
-                            isActive = obj.optBoolean("isActive", false)
+                            isActive = obj.optBoolean("isActive", false),
+                            skinPath = obj.optString("skinPath", ""),
+                            slimSkinModel = obj.optBoolean("slimSkinModel", false),
+                            skinSourceLabel = obj.optString("skinSourceLabel", "Default (Classic Steve)")
                         )
                     )
                 }
                 if (list.isNotEmpty()) {
-                    if (list.none { it.isActive }) {
-                        return list.mapIndexed { idx, acc -> acc.copy(isActive = idx == 0) }
-                    }
-                    return list
+                    val normalized = if (list.none { it.isActive }) {
+                        list.mapIndexed { idx, acc -> acc.copy(isActive = idx == 0) }
+                    } else list
+                    return normalized
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read zalith-accounts.json: ${e.message}")
@@ -245,7 +807,10 @@ object HorizonNativeBridge {
                 username = "Steve",
                 uuid = "8667ba71-b85a-4004-af54-457a9734eed7",
                 accountType = AccountType.OFFLINE,
-                isActive = true
+                isActive = true,
+                skinPath = "",
+                slimSkinModel = false,
+                skinSourceLabel = "Default (Classic Steve)"
             )
         )
         saveAccounts(context, defaultList, loadSavedConfig(context))
@@ -263,12 +828,21 @@ object HorizonNativeBridge {
                     put("uuid", acc.uuid)
                     put("accountType", acc.accountType.name)
                     put("isActive", acc.isActive)
+                    put("skinPath", acc.skinPath)
+                    put("slimSkinModel", acc.slimSkinModel)
+                    put("skinSourceLabel", acc.skinSourceLabel)
                 }
             )
         }
         File(home, "zalith-accounts.json").writeText(arr.toString(2))
 
         val active = accounts.firstOrNull { it.isActive } ?: accounts.firstOrNull() ?: return
+        if (active.skinPath.isNotBlank()) {
+            val sFile = File(active.skinPath)
+            if (sFile.isFile) {
+                syncActiveSkinToGameEngine(context, sFile, active.slimSkinModel, config.profile, false)
+            }
+        }
         syncNativeHorizonAccountAndCatalog(home, active, config)
     }
 
@@ -542,8 +1116,6 @@ object HorizonNativeBridge {
     }
 
     fun toggleContentItem(context: Context, folder: String, fileName: String, profileSlot: Int = 0, logEnabled: Boolean = true): Boolean {
-        val home = ensureHomeDirectories(context)
-        val profileHome = getProfileHome(home, profileSlot)
         val currentlyEnabled = isContentItemEnabled(context, folder, fileName, profileSlot)
         val newState = !currentlyEnabled
         setContentItemEnabled(context, folder, fileName, newState, profileSlot, logEnabled)
@@ -706,15 +1278,11 @@ object HorizonNativeBridge {
         appendSystemLog("Resumed Minecraft 26.3 asset download.", logEnabled, context)
     }
 
-    /**
-     * Cancels the active download and immediately deletes all in-progress/partial files (`official.partial`, etc.).
-     */
     fun cancelMinecraft26Download(context: Context, logEnabled: Boolean = true) {
         val home = ensureHomeDirectories(context)
         File(home, "zalith-install-cancelled.flag").writeText("1")
         File(home, "zalith-install-paused.flag").delete()
 
-        // Delete partial staging directories and progress files immediately
         listOf(
             File(home, "official.partial"),
             File(home, ".local/horizon-client/official.partial"),
@@ -732,12 +1300,6 @@ object HorizonNativeBridge {
         Toast.makeText(context, "Download dibatalkan & file sementara dihapus", Toast.LENGTH_SHORT).show()
     }
 
-    /**
-     * Smart Incremental Repair:
-     * Checks existing files first (`engine-data.zip`, `asset-index.json`, `horizon-resources.json`,
-     * `audio-complete.json`, and all 60 Bedrock Touch Control textures in `assets/minecraft/textures/gui/bedrock/`).
-     * Only repairs or re-extracts missing/corrupted files without wiping valid assets!
-     */
     fun smartRepairAssets(context: Context, logEnabled: Boolean = true) {
         val home = ensureHomeDirectories(context)
         Thread({
@@ -747,7 +1309,6 @@ object HorizonNativeBridge {
             val root26 = File(home, ".local/horizon-client/26.3")
             root26.mkdirs()
 
-            // 1. Check & repair bundled engine-data.zip resources without deleting valid files
             val engineZip = File(home, "engine-data.zip")
             var repairedFromBundle = 0
             if (engineZip.exists() && engineZip.length() > 1024L) {
@@ -779,7 +1340,6 @@ object HorizonNativeBridge {
                 appendInstallLogFile(home, "[Smart Repair] All engine-data.zip & touch control files verified intact.")
             }
 
-            // 2. Check if core Mojang assets (`asset-index.json`, `horizon-resources.json`, `audio-complete.json`) exist
             val hasAssetIndex = File(root26, "asset-index.json").isFile && File(root26, "asset-index.json").length() > 64L
             val hasResources = File(root26, "horizon-resources.json").isFile
             val hasAudio = File(root26, "audio-complete.json").isFile
@@ -1101,10 +1661,6 @@ object HorizonNativeBridge {
         }
     }
 
-    /**
-     * Downloads a Store item (Mod from playhorizon.dev or Resource Pack from Modrinth) with live
-     * Pause, Resume, and Cancel (with immediate `.part` deletion) + auto-installs into active profile!
-     */
     fun downloadAndInstallStoreItem(
         context: Context,
         item: StoreCatalogItem,
@@ -1211,7 +1767,6 @@ object HorizonNativeBridge {
                         }
                     }
                 } else if (item.category == StoreCategory.HORIZON_MODS) {
-                    // Fallback synthetic .hmod bundle if staging release asset is building
                     val manifestToml = """
                         [mod]
                         id = "${item.id}"
@@ -1233,13 +1788,11 @@ object HorizonNativeBridge {
                     return@Thread
                 }
 
-                // Finalize installation into profileHome & home
                 val finalFile = File(destDir, actualFileName)
                 if (finalFile.exists()) finalFile.delete()
                 partFile.renameTo(finalFile)
 
                 if (item.category == StoreCategory.HORIZON_MODS) {
-                    // Copy to both `mods/` and `horizon-mods/` in `home` and `profileHome` as required by playhorizon.dev/mods!
                     listOf(home, profileHome).forEach { base ->
                         listOf("mods", "horizon-mods").forEach { sub ->
                             val target = File(File(base, sub).apply { mkdirs() }, actualFileName)
@@ -1293,14 +1846,9 @@ object HorizonNativeBridge {
         return 0
     }
 
-    /**
-     * Queries `https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases` once on startup,
-     * finds the highest semantic version across all releases (e.g. picking 1.11 over 1.10 when 1.9 is installed),
-     * and returns `GithubReleaseUpdateInfo` if a newer version exists.
-     */
     fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
         return try {
-            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 10, 0)
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 12, 0)
             val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000
                 readTimeout = 8000
@@ -1354,7 +1902,7 @@ object HorizonNativeBridge {
     }
 
     // ========================================================================
-    // FILE IMPORT, LOG READER, & GAME LAUNCH
+    // FILE IMPORT, STRUCTURED LOG READER, & GAME LAUNCH
     // ========================================================================
 
     fun importUriToDestination(context: Context, uri: Uri, subFolder: String, targetFileName: String, logEnabled: Boolean = true): File? {
@@ -1385,72 +1933,97 @@ object HorizonNativeBridge {
         return dir.listFiles()?.filter { it.isFile && it.length() > 1024L }?.sortedByDescending { it.lastModified() }.orEmpty()
     }
 
-    fun readFullSystemLogs(context: Context, logEnabled: Boolean): String {
+    fun readStructuredLogs(
+        context: Context,
+        logEnabled: Boolean,
+        category: LogCategoryFilter = LogCategoryFilter.ALL
+    ): List<StructuredLogEntry> {
         if (!logEnabled) {
-            return "System & Game Logging is currently disabled in Settings.\nEnable 'System Logs' in the Settings tab to record launcher, download, and Minecraft runtime events."
+            return listOf(
+                StructuredLogEntry(
+                    id = 0,
+                    timestamp = "--:--:--",
+                    severity = LogSeverityFilter.WARN,
+                    sourceTag = "Settings",
+                    message = "System & Game Logging is currently disabled. Enable 'System & Game Runtime Logs' in Settings -> Launcher to record events."
+                )
+            )
         }
         val home = ensureHomeDirectories(context)
-        val sb = StringBuilder()
-        sb.appendLine("=== HorizonZ $INSTALLED_LAUNCHER_VERSION System & Minecraft Runtime Log ===")
-        sb.appendLine("PID: ${Process.myPid()} | Data Dir: ${home.absolutePath}")
-        sb.appendLine("26.3 Assets Ready: ${isMinecraft26Ready(context)}")
-        sb.appendLine("---------------------------------------------------")
+        val entries = mutableListOf<StructuredLogEntry>()
+        var nextId = 1
 
-        val sharedLog = File(home, "zalith-system.log")
-        if (sharedLog.exists()) {
-            sb.appendLine("[Launcher & :game Process Events]")
-            runCatching { sharedLog.readLines().takeLast(80).forEach { sb.appendLine(it) } }
-            sb.appendLine("---------------------------------------------------")
-        } else if (memoryLogs.isNotEmpty()) {
-            sb.appendLine("[Launcher Events]")
-            memoryLogs.forEach { sb.appendLine(it) }
-            sb.appendLine("---------------------------------------------------")
+        fun parseAndAdd(rawLine: String, defaultSource: String) {
+            val trimmed = rawLine.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("---")) return
+            val tsMatch = Regex("""^\[(\d{2}:\d{2}:\d{2})]\s*(.*)$""").find(trimmed)
+            val ts = tsMatch?.groupValues?.get(1) ?: SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+            val body = tsMatch?.groupValues?.get(2) ?: trimmed
+
+            val sev = when {
+                body.contains("error", ignoreCase = true) || body.contains("fail", ignoreCase = true) || body.contains("panic", ignoreCase = true) -> LogSeverityFilter.ERR
+                body.contains("warn", ignoreCase = true) || body.contains("Paused", ignoreCase = true) || body.contains("Cancel", ignoreCase = true) -> LogSeverityFilter.WARN
+                body.contains("Speed:", ignoreCase = true) || body.contains("Download", ignoreCase = true) || body.contains("Stage:", ignoreCase = true) || defaultSource == "Downloader" -> LogSeverityFilter.DL
+                else -> LogSeverityFilter.INFO
+            }
+            entries.add(
+                StructuredLogEntry(
+                    id = nextId++,
+                    timestamp = ts,
+                    severity = sev,
+                    sourceTag = defaultSource,
+                    message = body
+                )
+            )
         }
 
-        val installLog = File(home, "zalith-install-log.txt")
-        if (installLog.exists()) {
-            sb.appendLine("[Asset Installer & Download Log]")
-            runCatching { installLog.readLines().takeLast(80).forEach { sb.appendLine(it) } }
-            sb.appendLine("---------------------------------------------------")
-        }
-
-        val androidErr = File(home, "android-error.txt")
-        if (androidErr.exists()) {
-            sb.appendLine("[Native Engine Error]")
-            runCatching { sb.appendLine(androidErr.readText().takeLast(4000)) }
-            sb.appendLine("---------------------------------------------------")
-        }
-
-        val latestLogCandidates = listOf(
-            File(home, "logs/latest.log"),
-            File(home, ".local/horizon-client/26.3/logs/latest.log")
-        )
-        latestLogCandidates.firstOrNull { it.exists() }?.let { logFile ->
-            sb.appendLine("[Minecraft 26.3 Engine — latest.log]")
-            runCatching { logFile.readLines().takeLast(80).forEach { sb.appendLine(it) } }
-            sb.appendLine("---------------------------------------------------")
-        }
-
-        val clearedAt = runCatching { File(home, "zalith-log-cleared.txt").readText().trim().toLong() }.getOrDefault(0L)
-        if (System.currentTimeMillis() - clearedAt > 5000L) {
-            try {
-                val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "60"))
-                BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
-                    val lines = reader.readLines().filter {
-                        it.contains("horizon", ignoreCase = true) ||
-                            it.contains("Horizon", ignoreCase = false) ||
-                            it.contains("wgpu", ignoreCase = true)
-                    }
-                    if (lines.isNotEmpty()) {
-                        sb.appendLine("[Android Logcat (horizon / wgpu)]")
-                        lines.takeLast(40).forEach { sb.appendLine(it) }
-                    }
-                }
-            } catch (ignored: Exception) {
+        if (category == LogCategoryFilter.ALL || category == LogCategoryFilter.LAUNCHER) {
+            val sharedLog = File(home, "zalith-system.log")
+            if (sharedLog.exists()) {
+                runCatching { sharedLog.readLines().takeLast(90).forEach { parseAndAdd(it, "Launcher") } }
+            } else {
+                memoryLogs.forEach { parseAndAdd(it, "Launcher") }
             }
         }
 
-        return sb.toString()
+        if (category == LogCategoryFilter.ALL || category == LogCategoryFilter.DOWNLOADER) {
+            val installLog = File(home, "zalith-install-log.txt")
+            if (installLog.exists()) {
+                runCatching { installLog.readLines().takeLast(90).forEach { parseAndAdd(it, "Downloader") } }
+            }
+        }
+
+        if (category == LogCategoryFilter.ALL || category == LogCategoryFilter.ENGINE) {
+            val androidErr = File(home, "android-error.txt")
+            if (androidErr.exists()) {
+                runCatching { androidErr.readLines().takeLast(40).forEach { parseAndAdd("[ERROR] $it", "Game Engine") } }
+            }
+            val latestLogCandidates = listOf(
+                File(home, "logs/latest.log"),
+                File(home, ".local/horizon-client/26.3/logs/latest.log")
+            )
+            latestLogCandidates.firstOrNull { it.exists() }?.let { logFile ->
+                runCatching { logFile.readLines().takeLast(80).forEach { parseAndAdd(it, "Game Engine") } }
+            }
+        }
+
+        if (entries.isEmpty()) {
+            entries.add(
+                StructuredLogEntry(
+                    id = 0,
+                    timestamp = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()),
+                    severity = LogSeverityFilter.INFO,
+                    sourceTag = "HorizonZ $INSTALLED_LAUNCHER_VERSION",
+                    message = "Ready — 26.3 Assets Installed: ${isMinecraft26Ready(context)} | Data Dir: ${home.absolutePath}"
+                )
+            )
+        }
+        return entries
+    }
+
+    fun readFullSystemLogs(context: Context, logEnabled: Boolean): String {
+        val list = readStructuredLogs(context, logEnabled, LogCategoryFilter.ALL)
+        return list.joinToString("\n") { "[${it.timestamp}] [${it.sourceTag}/${it.severity.label}] ${it.message}" }
     }
 
     fun launchNativeGame(
@@ -1461,16 +2034,25 @@ object HorizonNativeBridge {
         val home = ensureHomeDirectories(context)
         saveConfig(context, config, activeAccount)
 
+        // Ensure active custom skin is synced right before launching the game!
+        val skinBmp = loadOrGenerateAccountSkinBitmap(context, activeAccount)
+        val activeSkinFile = File(home, "custom_skin_active.png")
+        FileOutputStream(activeSkinFile).use { fos ->
+            skinBmp.compress(Bitmap.CompressFormat.PNG, 100, fos)
+        }
+        syncActiveSkinToGameEngine(context, activeSkinFile, activeAccount.slimSkinModel, config.profile, config.enableSystemLog)
+
         File(home, "zalith-game-exited.flag").delete()
+        File(home, "zalith-game-boot.txt").writeText("10|Starting HorizonZ Native Engine...")
         File(home, "zalith-launch-token.txt").writeText(System.currentTimeMillis().toString())
 
         appendSystemLog(
-            "Hibernating Launcher UI & launching Minecraft 26.3 (Player=${activeAccount.username}, Renderer=${config.renderer.serdeKey}, Scale=${config.renderScalePercent}%)",
+            "Launching Minecraft 26.3 (Player=${activeAccount.username}, Skin=${activeAccount.skinSourceLabel}, Renderer=${config.renderer.serdeKey}, Scale=${config.renderScalePercent}%)",
             config.enableSystemLog,
             context
         )
         val intent = Intent(context, HorizonActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION)
             putExtra("HORIZON_ANDROID_PUBLIC", config.publicOnDeviceAssetDownload)
             putExtra("HORIZON_NO_AUDIO", config.disableAudioSafeMode)
             putExtra("HORIZON_NO_DISCORD", !config.discordRichPresence)

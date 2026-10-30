@@ -138,8 +138,13 @@ def fetch_real_hd_minecraft_wallpapers():
             if fpath.is_file():
                 candidates.append(fpath)
 
-    if len(candidates) < 12 and bg_opt.is_dir():
+    if len(candidates) < 18 and bg_opt.is_dir():
         for p in sorted(bg_opt.glob("*.png")):
+            if p not in candidates:
+                candidates.append(p)
+    mg_bg = minegrub_dir / "minegrub/backgrounds"
+    if len(candidates) < 18 and mg_bg.is_dir():
+        for p in sorted(mg_bg.glob("*.png")):
             if p not in candidates:
                 candidates.append(p)
 
@@ -147,7 +152,7 @@ def fetch_real_hd_minecraft_wallpapers():
     target_w, target_h = 1280, 720
     target_ratio = target_w / target_h
 
-    for idx in range(min(12, len(candidates))):
+    for idx in range(min(18, len(candidates))):
         src = candidates[idx]
         try:
             with Image.open(src) as im:

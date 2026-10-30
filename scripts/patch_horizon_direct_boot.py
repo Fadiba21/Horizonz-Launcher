@@ -23,10 +23,12 @@ if pages_rs.exists():
 
 # ==============================================================================
 # 2. Patch crates/horizon-client/src/android/launcher.rs:
-#    - Place `static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool` right above
+#    - Place `static GAME_LAUNCHED_ONCE` + `apply_horizonz_custom_skin` right above
 #      `pub(super) struct Launcher {` (AFTER all `//!` inner doc comments and `use` imports!)
-#    - Match the tail of `fn restore_launcher` to write `zalith-game-exited.flag` and call `events.exit()`
-#    - Match the full `fn resumed` block with `GAME_LAUNCHED_ONCE` single-shot direct boot
+#    - Write real-time startup milestones to `zalith-game-boot.txt` so the Black "HORIZONZ"
+#      splash screen tracks actual engine loading up to `100|Main Menu Ready`!
+#    - Apply `$HORIZON_HOME/custom_skin_active.png` into `.local/horizon-client/26.3`
+#      default player skin slots (`wide/` and `slim/`) before `self.action(events)`.
 # ==============================================================================
 launcher_rs = Path("crates/horizon-client/src/android/launcher.rs")
 if launcher_rs.exists():
@@ -35,12 +37,51 @@ if launcher_rs.exists():
     old_struct = "pub(super) struct Launcher {"
     new_struct = '''static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+fn apply_horizonz_custom_skin(home: &std::path::Path) {
+    let custom_skin = home.join("custom_skin_active.png");
+    if !custom_skin.is_file() {
+        return;
+    }
+    let Ok(skin_bytes) = std::fs::read(&custom_skin) else {
+        return;
+    };
+    if skin_bytes.len() < 64 {
+        return;
+    }
+    let entity_dir = home
+        .join(".local/horizon-client")
+        .join(horizon_core::VANILLA_VERSION)
+        .join("assets/minecraft/textures/entity");
+    let backup_dir = home
+        .join(".local/horizon-client")
+        .join(horizon_core::VANILLA_VERSION)
+        .join("vanilla_skins_backup");
+    let names = ["steve.png", "alex.png", "ari.png", "efe.png", "kai.png", "makena.png", "noor.png", "sunny.png", "zuri.png"];
+    for sub in ["player/wide", "player/slim"] {
+        let target_dir = entity_dir.join(sub);
+        let _ = std::fs::create_dir_all(&target_dir);
+        let bak_sub = backup_dir.join(sub);
+        let _ = std::fs::create_dir_all(&bak_sub);
+        for name in names {
+            let target_file = target_dir.join(name);
+            let bak_file = bak_sub.join(name);
+            if target_file.is_file() && !bak_file.exists() {
+                let _ = std::fs::copy(&target_file, &bak_file);
+            }
+            let _ = std::fs::write(&target_file, &skin_bytes);
+        }
+    }
+    for legacy in ["steve.png", "alex.png"] {
+        let _ = std::fs::write(entity_dir.join(legacy), &skin_bytes);
+    }
+}
+
 pub(super) struct Launcher {'''
     if old_struct in txt and "GAME_LAUNCHED_ONCE" not in txt:
         txt = txt.replace(old_struct, new_struct, 1)
-        print("[HorizonZ Patch] Inserted GAME_LAUNCHED_ONCE above struct Launcher (after //! doc comments)!")
+        print("[HorizonZ Patch] Inserted GAME_LAUNCHED_ONCE & apply_horizonz_custom_skin above struct Launcher!")
 
-    # (a) Patch `restore_launcher` tail FIRST (before `resumed`) so quitting Minecraft exits cleanly instead of reopening!
+    # (a) Patch `restore_launcher` tail FIRST so quitting Minecraft exits cleanly instead of reopening!
     old_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -57,7 +98,7 @@ pub(super) struct Launcher {'''
         txt = txt.replace(old_restore_tail, new_restore_tail, 1)
         print("[HorizonZ Patch] Patched restore_launcher tail to write zalith-game-exited.flag and exit cleanly!")
 
-    # (b) Patch `fn resumed` uniquely with `GAME_LAUNCHED_ONCE` single-shot direct boot
+    # (b) Patch `fn resumed` with `zalith-game-boot.txt` milestones + custom skin sync + single-shot launch
     old_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
         if let Some(game) = &mut self.game {
             return game.resumed(events);
@@ -69,6 +110,7 @@ pub(super) struct Launcher {'''
     }'''
     new_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
         if let Some(game) = &mut self.game {
+            let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "100|Main Menu Ready");
             return game.resumed(events);
         }
         if GAME_LAUNCHED_ONCE.load(std::sync::atomic::Ordering::SeqCst) {
@@ -76,7 +118,9 @@ pub(super) struct Launcher {'''
             events.exit();
             return;
         }
+        let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "25|Loading Profile Catalog & Settings...");
         self.catalog.refresh(&self.home);
+        let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "45|Creating Vulkan / WGPU Surface...");
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
@@ -84,17 +128,21 @@ pub(super) struct Launcher {'''
         }
         if self.game.is_none() && self.worker.is_none() {
             if !GAME_LAUNCHED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "70|Loading Minecraft 26.3 Resources & Custom Skin...");
+                apply_horizonz_custom_skin(&self.home);
                 if let Err(error) = self.action(events) {
                     self.fail(error);
+                } else {
+                    let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "100|Main Menu Ready");
                 }
             }
         }
     }'''
     if old_resumed_fn in txt:
         txt = txt.replace(old_resumed_fn, new_resumed_fn, 1)
-        print("[HorizonZ Patch] Patched Launcher::resumed with single-shot GAME_LAUNCHED_ONCE direct boot!")
+        print("[HorizonZ Patch] Patched Launcher::resumed with boot milestones, custom skin sync, and single-shot direct boot!")
 
-    # (c) Auto-launch game when install worker finishes
+    # (c) Auto-launch game when install worker finishes & signal 100|Main Menu Ready
     old_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
             if let Err(error) = result {
@@ -105,8 +153,12 @@ pub(super) struct Launcher {'''
             self.worker = None;
             match result {
                 Ok(()) => {
+                    let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "75|Starting Minecraft 26.3 Engine...");
+                    apply_horizonz_custom_skin(&self.home);
                     if let Err(error) = self.action(events) {
                         self.fail(error);
+                    } else {
+                        let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "100|Main Menu Ready");
                     }
                 }
                 Err(error) => self.fail(error),
@@ -114,7 +166,7 @@ pub(super) struct Launcher {'''
         }'''
     if old_worker in txt:
         txt = txt.replace(old_worker, new_worker, 1)
-        print("[HorizonZ Patch] Patched Launcher::about_to_wait to auto-launch game::android_game()!")
+        print("[HorizonZ Patch] Patched Launcher::about_to_wait to auto-launch game and write 100|Main Menu Ready!")
 
     launcher_rs.write_text(txt, encoding="utf-8")
 
@@ -126,13 +178,11 @@ android_res_rs = Path("crates/horizon-client/src/android_resources.rs")
 if android_res_rs.exists():
     res_txt = android_res_rs.read_text(encoding="utf-8")
 
-    # (a) Fallback control revision
     old_rev = '.ok_or("Missing control revision")?'
     new_rev = '.unwrap_or("46ba6ea985fb5a92d79a9419198f10dda14c199d")'
     if old_rev in res_txt:
         res_txt = res_txt.replace(old_rev, new_rev, 1)
 
-    # (b) Fast timeouts & redirect support on ureq::AgentBuilder
     old_agent = '''    let agent = ureq::AgentBuilder::new()
         .redirects(0)
         .timeout_connect(std::time::Duration::from_secs(30))
@@ -146,7 +196,6 @@ if android_res_rs.exists():
     if old_agent in res_txt:
         res_txt = res_txt.replace(old_agent, new_agent, 1)
 
-    # (c) Multi-mirror fetch (raw.githubusercontent.com -> cdn.jsdelivr.net) + non-blocking fallback PNG
     old_fetch = '''        let mut bytes = Vec::new();
         agent
             .get(&url)
@@ -190,7 +239,7 @@ if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.11 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
+// === HorizonZ 1.12 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");

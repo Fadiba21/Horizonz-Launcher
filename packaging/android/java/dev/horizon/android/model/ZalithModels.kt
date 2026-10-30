@@ -5,6 +5,8 @@ enum class ZalithNavTab(val title: String) {
     VERSIONS("Game & Assets"),
     STORE("Store"),
     FILES("Files & Mods"),
+    ACCOUNTS("Account & Skins"),
+    LOGS("System Logs"),
     SETTINGS("Settings")
 }
 
@@ -92,7 +94,18 @@ data class ZalithAccount(
     val username: String,
     val uuid: String,
     val accountType: AccountType,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
+    val skinPath: String = "",
+    val slimSkinModel: Boolean = false,
+    val skinSourceLabel: String = "Default (Classic Steve)"
+)
+
+data class SkinDetectionResult(
+    val success: Boolean,
+    val skinFile: java.io.File?,
+    val slimModel: Boolean,
+    val sourceLabel: String,
+    val message: String
 )
 
 data class HorizonConfigState(
