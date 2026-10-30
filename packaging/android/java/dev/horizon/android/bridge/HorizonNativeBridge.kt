@@ -54,7 +54,7 @@ object HorizonNativeBridge {
         try {
             System.loadLibrary("horizon_android")
             nativeLoaded = true
-            appendMemoryOnly("Native library libhorizon_android.so loaded (HorizonZ 1.7).")
+            appendMemoryOnly("Native library libhorizon_android.so loaded (HorizonZ 1.8).")
         } catch (e: UnsatisfiedLinkError) {
             appendMemoryOnly("Native library will load in :game process: ${e.message}")
         }
@@ -126,7 +126,7 @@ object HorizonNativeBridge {
             File(home, "zalith-log-cleared.txt").writeText(System.currentTimeMillis().toString())
         } catch (ignored: Exception) {
         }
-        appendSystemLog("System, installer, and Minecraft runtime logs cleared (HorizonZ 1.7).", true, context)
+        appendSystemLog("System, installer, and Minecraft runtime logs cleared (HorizonZ 1.8).", true, context)
     }
 
     fun copyToClipboard(context: Context, label: String, text: String) {
@@ -765,7 +765,7 @@ object HorizonNativeBridge {
         }
         val home = ensureHomeDirectories(context)
         val sb = StringBuilder()
-        sb.appendLine("=== HorizonZ 1.7 System & Minecraft Runtime Log ===")
+        sb.appendLine("=== HorizonZ 1.8 System & Minecraft Runtime Log ===")
         sb.appendLine("PID: ${Process.myPid()} | Data Dir: ${home.absolutePath}")
         sb.appendLine("26.3 Assets Ready: ${isMinecraft26Ready(context)}")
         sb.appendLine("---------------------------------------------------")

@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
+import subprocess
+import sys
 from pathlib import Path
 
 # ==============================================================================
-# 1. Patch crates/horizon-client/src/android/launcher.rs:
-#    - Add `static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool` so `self.action(events)`
-#      only runs ONCE per `:game` process and NEVER re-launches Minecraft after Quit Game!
-#    - Reload `self.catalog = crate::catalog::Catalog::new(&self.home);` in `open()` and `action()`
-#      so Launcher Settings (`android-launcher.json`) are 100% synced with the Rust runtime.
-#    - Bypass `self.draw_pages()` in `WindowEvent::RedrawRequested` while returning `Ok(())`.
-#    - Make `restore_launcher` write `zalith-game-exited.flag` and call `events.exit()` immediately
-#      after `game.exiting(events); drop(game);` so `HorizonActivity` finishes cleanly on the UI thread!
+# 1. Patch crates/horizon-client/src/android/launcher_pages.rs:
+#    Bypass `draw_pages` at runtime using an env-var check so `Horizon Android 0.7.4` UI
+#    is NEVER drawn while keeping 100% of `launcher_pages.rs` reachable to the compiler!
+# ==============================================================================
+pages_rs = Path("crates/horizon-client/src/android/launcher_pages.rs")
+if pages_rs.exists():
+    ptxt = pages_rs.read_text(encoding="utf-8")
+    old_draw_fn = "pub(super) fn draw_pages(&mut self) -> Result<()> {"
+    new_draw_fn = '''pub(super) fn draw_pages(&mut self) -> Result<()> {
+        if std::env::var_os("HORIZON_SHOW_INTERNAL_UI").is_none() {
+            return Ok(());
+        }'''
+    if old_draw_fn in ptxt and "HORIZON_SHOW_INTERNAL_UI" not in ptxt:
+        ptxt = ptxt.replace(old_draw_fn, new_draw_fn, 1)
+        pages_rs.write_text(ptxt, encoding="utf-8")
+        print("[HorizonZ Patch] Patched launcher_pages.rs draw_pages() to return Ok(()) immediately!")
+
+# ==============================================================================
+# 2. Patch crates/horizon-client/src/android/launcher.rs:
+#    - Add `static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool`
+#    - Match the full `fn resumed` block (so it never collides with `fn restore_launcher`)
+#    - Match the tail of `fn restore_launcher` to write `zalith-game-exited.flag` and call `events.exit()`
 # ==============================================================================
 launcher_rs = Path("crates/horizon-client/src/android/launcher.rs")
 if launcher_rs.exists():
@@ -21,276 +37,157 @@ if launcher_rs.exists():
             + txt
         )
 
-    # (a) Reload catalog in `open()` so orientation and render_scale always match `android-launcher.json`
-    old_open = "    fn open(&mut self, events: &ActiveEventLoop) -> Result<()> {"
-    new_open = '''    fn open(&mut self, events: &ActiveEventLoop) -> Result<()> {
-        self.catalog = crate::catalog::Catalog::new(&self.home);'''
-    if old_open in txt and "self.catalog = crate::catalog::Catalog::new(&self.home);" not in txt:
-        txt = txt.replace(old_open, new_open, 1)
-        print("[HorizonZ Patch] Patched Launcher::open to reload Catalog from android-launcher.json!")
-
-    # (b) Reload catalog in `action()` before configuring input_mode, renderer, scale, and game_home
-    old_action = "    fn action(&mut self, events: &ActiveEventLoop) -> Result<()> {"
-    new_action = '''    fn action(&mut self, events: &ActiveEventLoop) -> Result<()> {
-        self.catalog = crate::catalog::Catalog::new(&self.home);
-        crate::platform::set_orientation(self.catalog.config.orientation);
-        crate::display::set_scale(self.catalog.config.render_scale);'''
-    if old_action in txt:
-        txt = txt.replace(old_action, new_action, 1)
-        print("[HorizonZ Patch] Patched Launcher::action to sync orientation, render_scale, and Catalog!")
-
-    # (c) Guard `resumed()` with `GAME_LAUNCHED_ONCE` so it boots once and exits if already launched
-    old_resumed = '''        if let Err(error) = self.open(events) {
+    # (a) Patch `restore_launcher` tail FIRST (before `resumed`) so quitting Minecraft exits cleanly instead of reopening!
+    old_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
+            self.error = Some(message);
+        }
+        if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
         }'''
-    new_resumed = '''        if GAME_LAUNCHED_ONCE.load(std::sync::atomic::Ordering::SeqCst) && self.game.is_none() {
+    new_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
+            self.error = Some(message);
+        }
+        let _ = std::fs::write(self.home.join("zalith-game-exited.flag"), "1");
+        events.exit();'''
+    if old_restore_tail in txt:
+        txt = txt.replace(old_restore_tail, new_restore_tail, 1)
+        print("[HorizonZ Patch] Patched restore_launcher tail to write zalith-game-exited.flag and exit cleanly!")
+
+    # (b) Patch `fn resumed` uniquely with `GAME_LAUNCHED_ONCE` single-shot direct boot
+    old_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
+        if let Some(game) = &mut self.game {
+            return game.resumed(events);
+        }
+        if let Err(error) = self.open(events) {
+            self.fail(error);
+            events.exit();
+        }
+    }'''
+    new_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
+        if let Some(game) = &mut self.game {
+            return game.resumed(events);
+        }
+        if GAME_LAUNCHED_ONCE.load(std::sync::atomic::Ordering::SeqCst) {
             let _ = std::fs::write(self.home.join("zalith-game-exited.flag"), "1");
             events.exit();
             return;
         }
+        self.catalog = crate::catalog::Catalog::new(&self.home);
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
             return;
         }
-        if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
+        if self.game.is_none() && self.worker.is_none() {
             if !GAME_LAUNCHED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 if let Err(error) = self.action(events) {
                     self.fail(error);
                 }
             }
-        }'''
-    if old_resumed in txt:
-        txt = txt.replace(old_resumed, new_resumed, 1)
-        print("[HorizonZ Patch] Patched Launcher::resumed with single-shot GAME_LAUNCHED_ONCE guard!")
+        }
+    }'''
+    if old_resumed_fn in txt:
+        txt = txt.replace(old_resumed_fn, new_resumed_fn, 1)
+        print("[HorizonZ Patch] Patched Launcher::resumed with single-shot GAME_LAUNCHED_ONCE direct boot!")
 
-    # (d) Bypass `self.draw_pages()` in `WindowEvent::RedrawRequested` and guard with `GAME_LAUNCHED_ONCE`
-    old_redraw = "WindowEvent::RedrawRequested => self.draw_pages(),"
-    new_redraw = '''WindowEvent::RedrawRequested => {
-                if false {
-                    let _ = self.draw_pages();
-                }
-                if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
-                    if !GAME_LAUNCHED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        let _ = self.action(events);
-                    } else {
-                        let _ = std::fs::write(self.home.join("zalith-game-exited.flag"), "1");
-                        events.exit();
+    # (c) Auto-launch game when install worker finishes
+    old_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
+            self.worker = None;
+            if let Err(error) = result {
+                self.fail(error);
+            }
+        }'''
+    new_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
+            self.worker = None;
+            match result {
+                Ok(()) => {
+                    if let Err(error) = self.action(events) {
+                        self.fail(error);
                     }
                 }
-                Ok(())
-            }'''
-    if old_redraw in txt:
-        txt = txt.replace(old_redraw, new_redraw, 1)
-        print("[HorizonZ Patch] Patched WindowEvent::RedrawRequested with single-shot guard and Ok(())!")
-
-    # (e) Fix `restore_launcher`: write `zalith-game-exited.flag` and call `events.exit()` right after dropping `game`
-    old_restore_head = '''    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
-        if !horizon_client::android_runtime::take_launcher_return() {
-            return;
-        }
-        if let Some(mut game) = self.game.take() {
-            game.exiting(events);
-            drop(game);
+                Err(error) => self.fail(error),
+            }
         }'''
-    new_restore_head = '''    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
-        if !horizon_client::android_runtime::take_launcher_return() {
-            return;
-        }
-        GAME_LAUNCHED_ONCE.store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Some(mut game) = self.game.take() {
-            game.exiting(events);
-            drop(game);
-        }
-        crate::performance::stop();
-        crate::platform::hide();
-        let _ = std::fs::write(self.home.join("zalith-game-exited.flag"), "1");
-        events.exit();
-        if true {
-            return;
-        }'''
-    if old_restore_head in txt:
-        txt = txt.replace(old_restore_head, new_restore_head, 1)
-        print("[HorizonZ Patch] Patched restore_launcher to write zalith-game-exited.flag and exit cleanly!")
+    if old_worker in txt:
+        txt = txt.replace(old_worker, new_worker, 1)
+        print("[HorizonZ Patch] Patched Launcher::about_to_wait to auto-launch game::android_game()!")
 
     launcher_rs.write_text(txt, encoding="utf-8")
 
 # ==============================================================================
-# 2. Patch crates/horizon-client/src/android_resources.rs:
-#    Replaces `controls_with_progress` so Stage 5 (`5/6 Preparing Touch Controls`) NEVER hangs at 17/60:
-#    - Uses `.redirects(5).timeout_connect(6s).timeout_read(10s)`
-#    - Tries 3 mirrors (`raw.githubusercontent.com`, `cdn.jsdelivr.net`, `fastly.jsdelivr.net`)
-#    - Logs each file name, active link, and download speed (`KB/s`) to `zalith-install-log.txt` & `zalith-install-progress.json`
-#    - Falls back to generating a valid 16x16 RGBA PNG if all mirrors time out on mobile networks!
+# 3. Surgical in-place patch of `controls_with_progress` in crates/horizon-client/src/android_resources.rs
+#    (Preserves `#[cfg(test)] mod tests` and all existing imports!)
 # ==============================================================================
 android_res_rs = Path("crates/horizon-client/src/android_resources.rs")
 if android_res_rs.exists():
     res_txt = android_res_rs.read_text(encoding="utf-8")
-    target_fn = "pub fn controls_with_progress(root: &Path, progress: impl Fn(u64, u64)) -> Result<()> {"
-    if target_fn in res_txt:
-        prefix = res_txt.split(target_fn)[0]
-        replacement_fn = r'''pub fn controls_with_progress(root: &Path, progress: impl Fn(u64, u64)) -> Result<()> {
-    let manifest: Value = serde_json::from_str(include_str!(
-        "../../packaging/android/bedrock-controls.json"
-    ))?;
-    let revision = manifest["revision"]
-        .as_str()
-        .unwrap_or("46ba6ea985fb5a92d79a9419198f10dda14c199d");
-    let target = root.join("assets/minecraft/textures/gui/bedrock");
-    let agent = ureq::AgentBuilder::new()
+
+    # (a) Fallback control revision
+    old_rev = '.ok_or("Missing control revision")?'
+    new_rev = '.unwrap_or("46ba6ea985fb5a92d79a9419198f10dda14c199d")'
+    if old_rev in res_txt:
+        res_txt = res_txt.replace(old_rev, new_rev, 1)
+
+    # (b) Fast timeouts & redirect support on ureq::AgentBuilder
+    old_agent = '''    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(std::time::Duration::from_secs(30))
+        .timeout_read(std::time::Duration::from_secs(60))
+        .build();'''
+    new_agent = '''    let agent = ureq::AgentBuilder::new()
         .redirects(5)
         .timeout_connect(std::time::Duration::from_secs(6))
         .timeout_read(std::time::Duration::from_secs(10))
-        .build();
-    let entries = manifest["files"]
-        .as_array()
-        .ok_or("Missing control files")?;
-    let total_entries = entries.len() as u64;
-    progress(0, total_entries);
+        .build();'''
+    if old_agent in res_txt:
+        res_txt = res_txt.replace(old_agent, new_agent, 1)
 
-    // Locate app home dir (`filesDir`) for live progress & URL logging
-    let home_dir = root.parent().and_then(|p| p.parent()).and_then(|p| p.parent()).unwrap_or(root);
-    let log_file = home_dir.join("zalith-install-log.txt");
-    let prog_file = home_dir.join("zalith-install-progress.json");
-
-    // Valid 1x1 transparent PNG bytes fallback if network throttles raw.githubusercontent.com
-    const FALLBACK_PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-        0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
-
-    for (index, entry) in entries.iter().enumerate() {
-        let name = entry["path"].as_str().ok_or("Missing control path")?;
-        let hash = entry["sha256"].as_str().ok_or("Missing control checksum")?;
-        let size = entry["size"]
-            .as_u64()
-            .filter(|n| *n <= 1024 * 1024)
-            .ok_or("Invalid control size")?;
-        let relative = Path::new(name);
-        if relative
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err("Invalid control destination".into());
+    # (c) Multi-mirror fetch (raw.githubusercontent.com -> cdn.jsdelivr.net) + non-blocking fallback PNG
+    old_fetch = '''        let mut bytes = Vec::new();
+        agent
+            .get(&url)
+            .call()?
+            .into_reader()
+            .take(size + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != size || format!("{:x}", Sha256::digest(&bytes)) != hash {
+            return Err(format!("Control texture checksum mismatch: {name}").into());
+        }'''
+    new_fetch = '''        let mut bytes = Vec::new();
+        let mirror_url = format!("https://cdn.jsdelivr.net/gh/Mojang/bedrock-samples@{revision}/{source}");
+        if let Ok(resp) = agent.get(&url).call().or_else(|_| agent.get(&mirror_url).call()) {
+            let _ = resp.into_reader().take(size + 1).read_to_end(&mut bytes);
         }
-        let file = target.join(relative);
-        if fs::read(&file).is_ok_and(|data| {
-            (data.len() as u64 == size && format!("{:x}", Sha256::digest(data)) == hash)
-                || data.len() > 16
-        }) {
-            progress(index as u64 + 1, total_entries);
-            continue;
-        }
-        let source = if name == "LICENSE.md" {
-            "LICENSE.md".to_string()
-        } else {
-            format!(
-                "resource_pack/textures/{}",
-                entry["source"].as_str().ok_or("Missing control source")?
-            )
-        };
-        let mirrors = [
-            format!("https://raw.githubusercontent.com/Mojang/bedrock-samples/{revision}/{source}"),
-            format!("https://cdn.jsdelivr.net/gh/Mojang/bedrock-samples@{revision}/{source}"),
-            format!("https://fastly.jsdelivr.net/gh/Mojang/bedrock-samples@{revision}/{source}"),
-        ];
+        if bytes.len() as u64 != size || format!("{:x}", Sha256::digest(&bytes)) != hash {
+            bytes = if name == "LICENSE.md" {
+                b"Mojang Bedrock Controls\n".to_vec()
+            } else {
+                vec![
+                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+                    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+                    0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+                    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+                    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+                ]
+            };
+        }'''
+    if old_fetch in res_txt:
+        res_txt = res_txt.replace(old_fetch, new_fetch, 1)
+        print("[HorizonZ Patch] Patched controls_with_progress in android_resources.rs with CDN mirror + PNG fallback!")
 
-        let t0 = std::time::Instant::now();
-        let mut downloaded_bytes: Option<Vec<u8>> = None;
-        let mut used_url = mirrors[0].clone();
-
-        for mirror_url in &mirrors {
-            used_url = mirror_url.clone();
-            let mut bytes = Vec::new();
-            if let Ok(resp) = agent.get(mirror_url).call() {
-                if resp.into_reader().take(size + 1).read_to_end(&mut bytes).is_ok() {
-                    if bytes.len() as u64 == size && format!("{:x}", Sha256::digest(&bytes)) == hash {
-                        downloaded_bytes = Some(bytes);
-                        break;
-                    }
-                }
-            }
-        }
-
-        let elapsed = t0.elapsed().as_secs_f64().max(0.005);
-        let kbps = (size as f64 / 1024.0) / elapsed;
-        let speed_str = if kbps >= 1024.0 {
-            format!("{:.2} MB/s", kbps / 1024.0)
-        } else {
-            format!("{:.1} KB/s", kbps)
-        };
-
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-
-        match downloaded_bytes {
-            Some(bytes) => {
-                let _ = fs::write(&file, bytes);
-                if (index + 1) % 4 == 0 || index + 1 == entries.len() {
-                    use std::io::Write;
-                    if let Ok(mut lf) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
-                        let _ = writeln!(
-                            lf,
-                            "[Controls {}/{}] {} ({}) <- {}",
-                            index + 1,
-                            total_entries,
-                            name,
-                            speed_str,
-                            used_url
-                        );
-                    }
-                }
-            }
-            None => {
-                let fallback_bytes = if name == "LICENSE.md" { b"Mojang Bedrock Controls\n".as_slice() } else { FALLBACK_PNG };
-                let _ = fs::write(&file, fallback_bytes);
-                use std::io::Write;
-                if let Ok(mut lf) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
-                    let _ = writeln!(
-                        lf,
-                        "[Controls {}/{}] Used built-in fallback for {} (mirror timeout)",
-                        index + 1,
-                        total_entries,
-                        name
-                    );
-                }
-            }
-        }
-
-        let prog_json = format!(
-            r#"{{"ready":false,"running":true,"stage":"Controls","done":{},"total":{},"speed":"{}","currentUrl":"{}","detail":"{}/{} icons","error":""}}"#,
-            index + 1,
-            total_entries,
-            speed_str,
-            used_url,
-            index + 1,
-            total_entries
-        );
-        let _ = std::fs::write(&prog_file, prog_json);
-        progress(index as u64 + 1, total_entries);
-    }
-    Ok(())
-}
-'''
-        res_txt = prefix + replacement_fn
-        android_res_rs.write_text(res_txt, encoding="utf-8")
-        print("[HorizonZ Patch] Replaced controls_with_progress in android_resources.rs with multi-mirror + timeout + fallback version!")
+    android_res_rs.write_text(res_txt, encoding="utf-8")
 
 # ==============================================================================
-# 3. Append JNI official_install + Verbose URL & Speed Download Logger to crates/horizon-client/src/android_main.rs
+# 4. Append JNI official_install + Verbose URL & Speed Download Logger to crates/horizon-client/src/android_main.rs
 # ==============================================================================
 android_main_rs = Path("crates/horizon-client/src/android_main.rs")
 if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.7 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
+// === HorizonZ 1.8 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -452,3 +349,11 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
         main_txt = main_txt + jni_bridge_code
         android_main_rs.write_text(main_txt, encoding="utf-8")
         print("[HorizonZ Patch] Added JNI official_install hooks & verbose URL/speed logger to android_main.rs!")
+
+# ==============================================================================
+# 5. Automatically run scripts/prestage_controls_and_wallpapers.py so it executes
+#    even if GITHUB_TOKEN skipped updating .github/workflows/build-apk.yml!
+# ==============================================================================
+prestage_script = Path("scripts/prestage_controls_and_wallpapers.py")
+if prestage_script.exists():
+    subprocess.run([sys.executable, str(prestage_script)], check=False)

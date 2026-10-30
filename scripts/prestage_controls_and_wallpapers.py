@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import urllib.request
@@ -18,14 +17,21 @@ def prestage_bedrock_controls():
         print("[Prestage] bedrock-controls.json not found, skipping.")
         return
 
-    manifest = json.loads(controls_json.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(controls_json.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[Prestage] Could not parse bedrock-controls.json: {e}")
+        return
+
     revision = manifest.get("revision") or "46ba6ea985fb5a92d79a9419198f10dda14c199d"
     entries = manifest.get("files") or []
-    print(f"[Prestage] Pre-fetching {len(entries)} Bedrock touch control textures (rev {revision[:10]})...")
+    if not entries:
+        print("[Prestage] No control entries in bedrock-controls.json, skipping.")
+        return
 
+    print(f"[Prestage] Pre-fetching {len(entries)} Bedrock touch control textures (rev {revision[:10]})...")
     staging_dir = Path("/tmp/horizonz_bedrock_controls")
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir, ignore_errors=True)
+    shutil.rmtree(staging_dir, ignore_errors=True)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     def fetch_one(entry):
@@ -38,8 +44,8 @@ def prestage_bedrock_controls():
         ]
         for url in urls:
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "HorizonZ-CI/1.7"})
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                req = urllib.request.Request(url, headers={"User-Agent": "HorizonZ-CI/1.8"})
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     data = resp.read()
                 if hashlib.sha256(data).hexdigest() == expected_sha:
                     dest = staging_dir / "assets/minecraft/textures/gui/bedrock" / name
@@ -58,8 +64,9 @@ def prestage_bedrock_controls():
                 ok_count += 1
 
     print(f"[Prestage] Downloaded & verified {ok_count}/{len(entries)} touch control files.")
+    if ok_count == 0:
+        return
 
-    # Inject all verified touch control textures into .local/android/gradle-assets/engine-data.zip
     assets_dir = ROOT_DIR / ".local/android/gradle-assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     engine_zip = assets_dir / "engine-data.zip"
