@@ -3,8 +3,9 @@
 //! does, answers keep-alives and pings, accepts teleports, acknowledges chunk batches, and moves at 20 Hz.
 //!
 //! Bots fly a little above the ground, so the server must give them creative mode (`gamemode=creative`
-//! and `force-gamemode=true`): they never touch blocks, so they need no world of their own, and no server
-//! can refuse their moves for walking into terrain. Every behaviour is deterministic from `--seed`.
+//! and `force-gamemode=true`): they never walk on blocks, so they need no world of their own, and no server
+//! can refuse their moves for walking into terrain (the `server` crowd places and breaks stone in the air
+//! below itself). Every behaviour is deterministic from `--seed`.
 //!
 //!   horizon-bots --server 127.0.0.1:25565 --bots 25 --behaviour mixed --seconds 360 --report bots.json
 //!
@@ -46,6 +47,11 @@ horizon-bots: load-test bots for a Minecraft Java Edition 26.3 server (offline m
   --server HOST:PORT     default 127.0.0.1:25565
   --bots N               default 10
   --behaviour B          idle, walk, explore or mixed (60 % walk, 20 % explore, 20 % idle); default mixed.
+                         server: a public server's crowd. Of every ten bots, four travel 150 to 1500
+                         blocks out at 10 blocks a second and live there, five live around spawn, one
+                         explores at 10 blocks a second. The settled ones walk around their home and
+                         place or break stone near themselves every few seconds; the ones at spawn
+                         also chat about every 30 s and drop an item about every 20 s.
                          One abusive client, to test a server's limits (run it beside a normal crowd):
                          flood-move (--flood moves a tick, each 64 to 256 blocks away, ignoring chunks),
                          flood-acks (--flood chunk batch acks asking for 64 chunks a tick, while exploring),
@@ -75,6 +81,8 @@ enum Behaviour {
     Idle,
     Walk,
     Explore,
+    Settle,
+    Town,
     FloodMove,
     FloodAcks,
     FloodPackets,
@@ -93,6 +101,8 @@ impl Behaviour {
             Self::Idle => "idle",
             Self::Walk => "walk",
             Self::Explore => "explore",
+            Self::Settle => "settle",
+            Self::Town => "town",
             Self::FloodMove => "flood-move",
             Self::FloodAcks => "flood-acks",
             Self::FloodPackets => "flood-packets",
@@ -644,7 +654,7 @@ fn run_bot(
     bot.deaf.store(o.no_read, Ordering::Relaxed);
     // What the costly floods need in hand (creative: the server takes the bot's word for it).
     let tool = match behaviour {
-        Behaviour::FloodUse => Some(Stack::new(STONE, 64)),
+        Behaviour::FloodUse | Behaviour::Settle | Behaviour::Town => Some(Stack::new(STONE, 64)),
         Behaviour::FloodBook => Some(Stack::new(WRITABLE_BOOK, 1)),
         _ => None,
     };
@@ -664,6 +674,24 @@ fn run_bot(
     let cruise = spawn[1] + 24.0;
     let heading = random.unit() * std::f64::consts::TAU;
     let mut target = pos;
+    // Where a settler lives: far out on its heading. The others live at spawn.
+    let mut home = spawn;
+    let mut travel = match behaviour {
+        Behaviour::Settle => 150.0 + random.unit() * 1350.0,
+        _ => 0.0,
+    };
+    if travel > 0.0 {
+        home = [
+            spawn[0] + heading.cos() * travel,
+            cruise,
+            spawn[2] + heading.sin() * travel,
+        ];
+    }
+    // The ticks until the next block placed or broken, chat line and dropped item.
+    let mut build_in = 20 + (random.unit() * 60.0) as u32;
+    let mut chat_in = 100 + (random.unit() * 600.0) as u32;
+    let mut drop_in = 100 + (random.unit() * 400.0) as u32;
+    let mut placed: Option<[i32; 3]> = None;
     let mut next = Instant::now();
     loop {
         if lock(&until).is_some_and(|u| Instant::now() >= u) || !bot.online.load(Ordering::SeqCst) {
@@ -712,16 +740,23 @@ fn run_bot(
         } else {
             match behaviour {
                 Behaviour::Idle => {}
-                Behaviour::Walk => {
+                Behaviour::Settle if travel > 0.0 => {
+                    // On the way home: 10 blocks a second, about a horse's gallop.
+                    let step = travel.min(0.5);
+                    travel -= step;
+                    pos[0] += heading.cos() * step;
+                    pos[2] += heading.sin() * step;
+                }
+                Behaviour::Walk | Behaviour::Settle | Behaviour::Town => {
                     let (dx, dz) = (target[0] - pos[0], target[2] - pos[2]);
                     let distance = dx.hypot(dz);
                     if distance < 1.0 {
                         let angle = random.unit() * std::f64::consts::TAU;
                         let reach = 8.0 + random.unit() * 40.0;
                         target = [
-                            spawn[0] + angle.cos() * reach,
+                            home[0] + angle.cos() * reach,
                             cruise,
-                            spawn[2] + angle.sin() * reach,
+                            home[2] + angle.sin() * reach,
                         ];
                     } else {
                         // Sprinting: 5.6 blocks a second.
@@ -762,8 +797,13 @@ fn run_bot(
                         }
                     }
                     // Flying in creative, by default about 22 blocks a second, which keeps new
-                    // chunks coming as fast as the server sends them.
-                    let step = o.explore_speed / 20.0;
+                    // chunks coming as fast as the server sends them (a server crowd's explorers: 10 at most).
+                    let speed = if o.behaviour == "server" {
+                        o.explore_speed.min(10.0)
+                    } else {
+                        o.explore_speed
+                    };
+                    let step = speed / 20.0;
                     pos[0] += heading.cos() * step;
                     pos[2] += heading.sin() * step;
                 }
@@ -774,6 +814,81 @@ fn run_bot(
             sequence += 1;
             if let Some(body) = costly(behaviour, i, sequence, pos, &mut random) {
                 send(body);
+            }
+        }
+        // A server crowd's player at home builds, chats and drops things now and then.
+        let at_home =
+            behaviour == Behaviour::Town || (behaviour == Behaviour::Settle && travel <= 0.0);
+        if at_home && pos[1] >= cruise && lock(&bot.held).contains(&here) {
+            build_in -= 1;
+            if build_in == 0 {
+                build_in = 40 + (random.unit() * 60.0) as u32;
+                sequence += 1;
+                // Break what it placed last time, or place stone in the air below it (air is
+                // replaceable, so the clicked block itself becomes stone).
+                let body = if let Some(at) = placed.take() {
+                    play::Serverbound::PlayerAction(play::PlayerAction {
+                        action: 0,
+                        pos: at,
+                        direction: 1,
+                        sequence,
+                    })
+                } else {
+                    let block = pos.map(|v| v.floor() as i32);
+                    let at = [
+                        block[0] + (random.unit() * 5.0) as i32 - 2,
+                        block[1] - 2,
+                        block[2] + (random.unit() * 5.0) as i32 - 2,
+                    ];
+                    placed = Some(at);
+                    play::Serverbound::UseItemOn(play::UseItemOn {
+                        hand: 0,
+                        pos: at,
+                        face: 1,
+                        cursor: [0.5, 1.0, 0.5],
+                        inside: false,
+                        world_border: false,
+                        sequence,
+                    })
+                };
+                send(body.encode());
+            }
+            if behaviour == Behaviour::Town {
+                chat_in -= 1;
+                if chat_in == 0 {
+                    chat_in = 400 + (random.unit() * 400.0) as u32;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as i64);
+                    send(
+                        play::Serverbound::Chat(play::Chat {
+                            message: format!("{name}: anyone near spawn? ({sequence})"),
+                            timestamp: now,
+                            salt: random.next() as i64,
+                            signature: None,
+                            last_seen: play::LastSeenUpdate {
+                                offset: 0,
+                                acknowledged: [0; 3],
+                                checksum: 0,
+                            },
+                        })
+                        .encode(),
+                    );
+                }
+                drop_in -= 1;
+                if drop_in == 0 {
+                    drop_in = 300 + (random.unit() * 200.0) as u32;
+                    // ServerboundPlayerActionPacket DROP_ITEM: one stone from the hand.
+                    send(
+                        play::Serverbound::PlayerAction(play::PlayerAction {
+                            action: 4,
+                            pos: [0, 0, 0],
+                            direction: 0,
+                            sequence: 0,
+                        })
+                        .encode(),
+                    );
+                }
             }
         }
         let ok = send(
@@ -817,6 +932,11 @@ fn behaviour_of(mode: &str, index: usize) -> Behaviour {
         "flood-book" => Behaviour::FloodBook,
         "flood-sign" => Behaviour::FloodSign,
         "flood-recipe" => Behaviour::FloodRecipe,
+        "server" => match index % 10 {
+            0..=3 => Behaviour::Settle,
+            9 => Behaviour::Explore,
+            _ => Behaviour::Town,
+        },
         // mixed: of every five bots, three walk, one explores, one stands.
         _ => match index % 5 {
             0 | 2 | 4 => Behaviour::Walk,
