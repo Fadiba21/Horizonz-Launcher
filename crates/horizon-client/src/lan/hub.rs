@@ -210,6 +210,9 @@ pub struct Hub {
     /// `spawn-protection` (dedicated servers): the radius around the world
     /// spawn that only operators may change.
     pub spawn_protection: i32,
+    /// `MinecraftServer.allowFlight`: true, but a dedicated server's
+    /// `allow-flight`. Off, a player floating too long is kicked.
+    pub allow_flight: bool,
     /// `chat-spam-threshold-seconds` as a TickThrottler threshold (20 a second):
     /// over it, a guest who is not an operator is kicked. 0 never kicks.
     pub chat_spam_threshold: i32,
@@ -385,6 +388,7 @@ impl Hub {
             ops: Default::default(),
             entity_range_percent: 100,
             spawn_protection: 0,
+            allow_flight: true,
             chat_spam_threshold: 0,
             command_spam_threshold: 0,
             weather: (false, 0.0, 0.0),
@@ -2251,6 +2255,9 @@ impl Hub {
         let g = &mut self.guests[i];
         g.first_good = g.position;
         g.known_moves = g.received_moves;
+        if self.tick_floating(i, events) {
+            return;
+        }
         let mut budget = PACKETS_PER_TICK;
         while budget > 0 {
             let Some((packet, bytes)) = self.guests[i].inbox.pop_front() else {
@@ -2537,7 +2544,10 @@ impl Hub {
             }
         }
         let start = g.position;
-        let (wrongly, refused) = self.collide(i, to, ctx);
+        // playerStandsOnSomething: the collision of the move before this one.
+        let (wrongly, refused, below) = self.collide(i, to, ctx);
+        let floating = self.client_is_floating(i, start, to, ctx);
+        self.guests[i].collided_below = below;
         if wrongly {
             let line = format!("{} moved wrongly!", self.guests[i].name);
             events.push(HostEvent::Warn(line));
@@ -2549,6 +2559,7 @@ impl Hub {
             return;
         }
         let g = &mut self.guests[i];
+        g.floating = floating;
         g.previous_position = g.position;
         g.position = to;
         // ServerChunkCache.move: its pairs are checked again.
@@ -2567,16 +2578,17 @@ impl Hub {
     }
 
     /// The collision part of handlePlayerPositionChange: whether the move
-    /// counts as moved wrongly (logged), and whether it is refused (the
-    /// player is sent back where they were).
-    fn collide(&self, i: usize, to: [f64; 3], ctx: &TickCtx) -> (bool, bool) {
+    /// counts as moved wrongly (logged), whether it is refused (the player
+    /// is sent back where they were), and whether something below stopped
+    /// it (`verticalCollisionBelow`).
+    fn collide(&self, i: usize, to: [f64; 3], ctx: &TickCtx) -> (bool, bool, bool) {
         let g = &self.guests[i];
         // noPhysics (spectators) and sleepers move freely.
         let Some(binding) = ctx.collision else {
-            return (false, false);
+            return (false, false, false);
         };
         if g.spectator() || g.sleeping {
-            return (false, false);
+            return (false, false, false);
         }
         // getBoundingBox: the box of the body's pose (swimming and crawling
         // are 0.6 tall), so a swimmer under a ceiling isn't sent back.
@@ -2601,28 +2613,28 @@ impl Hub {
             to[1] - g.position[1],
             to[2] - g.position[2],
         );
+        let done = scene.resolve(old, movement, 0.6, g.on_ground).ok();
+        let below = movement.y < 0.0 && done.is_some_and(|done| done.y != movement.y);
         let fail = !g.creative()
-            && scene
-                .resolve(old, movement, 0.6, g.on_ground)
-                .is_ok_and(|done| {
-                    let (dx, dz) = (movement.x - done.x, movement.z - done.z);
-                    dx * dx + dz * dz > 0.0625
-                });
+            && done.is_some_and(|done| {
+                let (dx, dz) = (movement.x - done.x, movement.z - done.z);
+                dx * dx + dz * dz > 0.0625
+            });
         if fail && scene.unobstructed(old).unwrap_or(true) {
-            return (true, true);
+            return (true, true, below);
         }
         // isEntityCollidingWithAnythingNew: a block the old box did not
         // already touch.
         let shrink = f64::from(1.0E-5_f32);
         let shrink = Vec3::new(shrink, shrink, shrink);
         let Ok(old_shape) = VoxelShape::from_box(old.deflate(shrink)) else {
-            return (fail, false);
+            return (fail, false, below);
         };
         let context = CollisionContext::position(g.position[1]);
         let Ok(scan) =
             BlockCollisionScan::new(&mut scene, context, new.deflate(shrink), false, 1 << 20)
         else {
-            return (fail, false);
+            return (fail, false, below);
         };
         for hit in scan {
             let Ok(hit) = hit else { break };
@@ -2631,10 +2643,77 @@ impl Hub {
                 .join_is_not_empty(&old_shape, ShapeOp::AND)
                 .unwrap_or(true)
             {
-                return (fail, true);
+                return (fail, true, below);
             }
         }
-        (fail, false)
+        (fail, false, below)
+    }
+
+    /// handlePlayerPositionChange's `clientIsFloating`, for a move from
+    /// `from` to `to`: it ended in the air, not falling, with nothing to
+    /// stand on and nothing that lets the player fly.
+    fn client_is_floating(&self, i: usize, from: [f64; 3], to: [f64; 3], ctx: &TickCtx) -> bool {
+        let g = &self.guests[i];
+        // Abilities.mayfly: creative and spectator players.
+        let excused = to[1] - from[1] < -0.03125
+            || g.collided_below
+            || g.spectator()
+            || self.allow_flight
+            || g.creative()
+            || g.effects.get("levitation").is_some()
+            || g.fall_flying
+            || g.motion
+                .as_ref()
+                .is_some_and(|m| m.auto_spin_attack_ticks > 0);
+        if excused {
+            return false;
+        }
+        // noBlocksAround: every block of the body's box, 1/16 wider and
+        // 0.55 lower, is air (outside the world counts as air).
+        let d = g.dimensions();
+        let (half, height) = (f64::from(d.width) / 2.0 + 0.0625, f64::from(d.height));
+        let lo = [to[0] - half, to[1] - 0.0625 - 0.55, to[2] - half].map(|v| v.floor() as i32);
+        let hi = [to[0] + half, to[1] + height + 0.0625, to[2] + half].map(|v| v.floor() as i32);
+        for x in lo[0]..=hi[0] {
+            for z in lo[2]..=hi[2] {
+                for y in lo[1]..=hi[1] {
+                    if !self.encoder.is_air(ctx.world.block(x, y, z).0) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// The floating part of ServerGamePacketListenerImpl.tickPlayer: a
+    /// player floating longer than `getMaximumFlyingTicks` is kicked
+    /// (true).
+    fn tick_floating(&mut self, i: usize, events: &mut Vec<HostEvent>) -> bool {
+        let g = &mut self.guests[i];
+        let dying = g.dead || g.health <= 0.0;
+        if !g.floating || g.sleeping || g.vehicle.is_some() || dying {
+            g.floating = false;
+            g.above_ground_ticks = 0;
+            return false;
+        }
+        g.above_ground_ticks += 1;
+        let gravity = g
+            .motion
+            .as_mut()
+            .map_or(Ok(0.08), |m| m.attribute("minecraft:gravity"))
+            .unwrap_or(0.08);
+        if g.above_ground_ticks <= maximum_flying_ticks(gravity) {
+            return false;
+        }
+        (g.floating, g.above_ground_ticks) = (false, 0);
+        let (conn, line) = (
+            g.conn,
+            format!("{} was kicked for floating too long!", g.name),
+        );
+        events.push(HostEvent::Warn(line));
+        self.kick(conn, translatable("multiplayer.disconnect.flying", &[]));
+        true
     }
 
     /// Acknowledge a block interaction (ClientboundBlockChangedAckPacket).
@@ -3027,10 +3106,29 @@ fn shared_flags(sneaking: bool, sprinting: bool, body: &BodyFlags) -> i8 {
     shared
 }
 
+/// ServerGamePacketListenerImpl.getMaximumFlyingTicks: 80 ticks, longer
+/// under weaker gravity, forever without any.
+fn maximum_flying_ticks(gravity: f64) -> i32 {
+    if gravity < f64::from(1.0E-5_f32) {
+        return i32::MAX;
+    }
+    (80.0 * (0.08 / gravity).max(1.0)).ceil() as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fast_hash::FxHashSet;
+
+    #[test]
+    fn floating_lasts_80_ticks_at_vanilla_gravity() {
+        assert_eq!(maximum_flying_ticks(0.08), 80);
+        // Heavier gravity doesn't shorten it; lighter lengthens it.
+        assert_eq!(maximum_flying_ticks(1.0), 80);
+        assert_eq!(maximum_flying_ticks(0.04), 160);
+        assert_eq!(maximum_flying_ticks(0.03), 214);
+        assert_eq!(maximum_flying_ticks(0.0), i32::MAX);
+    }
 
     /// `requeue` as it was, scanning the queue for each chunk of the view.
     fn requeue_scan(

@@ -143,6 +143,13 @@ pub struct Guest {
     /// (receivedMovePacketCount, knownMovePacketCount).
     pub received_moves: i32,
     pub known_moves: i32,
+    /// `clientIsFloating` and `aboveGroundTickCount`: the last move ended
+    /// in the air with nothing to explain it, and the ticks spent so.
+    pub floating: bool,
+    pub above_ground_ticks: i32,
+    /// `Entity.verticalCollisionBelow`: the last move was stopped by
+    /// something below.
+    pub collided_below: bool,
     /// A position move arrived since the client's last ClientTickEnd
     /// (receivedPositionThisTick): a second one is a protocol error.
     pub position_this_tick: bool,
@@ -326,6 +333,9 @@ impl Guest {
             first_good: position,
             received_moves: 0,
             known_moves: 0,
+            floating: false,
+            above_ground_ticks: 0,
+            collided_below: false,
             position_this_tick: false,
             moved: false,
             loaded: false,
