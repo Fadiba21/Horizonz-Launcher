@@ -190,7 +190,7 @@ if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.10 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
+// === HorizonZ 1.11 JNI Bridge for Official 26.3 Asset Installer & Verbose URL/Speed Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");

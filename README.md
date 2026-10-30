@@ -1,10 +1,10 @@
-# HorizonZ - Launcher (v1.10)
+# HorizonZ - Launcher (v1.11)
 
 **Real Minecraft: Java Edition 26.3 Rust Engine for Android — Instant Touch Controls, Background Download Notification, Verbose Speed/URL Logger, Full Runtime & `options.txt` Sync, and Real Web HD 16:9 Wallpapers.**
 
 [![Build HorizonZ Launcher APK](https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml/badge.svg)](https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml)
 
-## Pembaruan Utama v1.10 (`HorizonZ1.10.zip`)
+## Pembaruan Utama v1.11 (`HorizonZ1.11.zip`)
 
 1. **Perbaikan Stuck `5/6 Preparing Touch Controls` (`17 / 60 (28%)`)**:
    - Menambahkan `scripts/prestage_controls_and_wallpapers.py` yang mengunduh dan menyertakan ke-60 ikon *Bedrock Touch Controls* langsung ke dalam `engine-data.zip` saat proses build CI, ditambah patch *multi-mirror* (`raw.githubusercontent.com` + `cdn.jsdelivr.net` + `fastly.jsdelivr.net`), *timeout* 6s/10s, dan *fallback* PNG pada `crates/horizon-client/src/android_resources.rs`.

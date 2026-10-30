@@ -62,7 +62,7 @@ data class StoreDownloadProgress(
 
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.10"
+    const val INSTALLED_LAUNCHER_VERSION = "1.11"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
