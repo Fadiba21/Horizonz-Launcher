@@ -104,6 +104,19 @@ enum class BuiltInSkinPreset(
     val pantsColor: Int,
     val bootsColor: Int
 ) {
+    GOTHIC_MONOCHROME(
+        "gothic_monochrome",
+        "Gothic Monochrome (Custom)",
+        "Slim 3px Arms • White Hair & Dark Outfit",
+        true,
+        0xFFF2F2F2.toInt(),
+        0xFFE6E6E6.toInt(),
+        0xFF141414.toInt(),
+        0xFF1C1C1C.toInt(),
+        0xFFEAEAEA.toInt(),
+        0xFF161616.toInt(),
+        0xFF2E2E2E.toInt()
+    ),
     CLASSIC_STEVE(
         "classic_steve",
         "Classic Steve",
@@ -173,7 +186,7 @@ enum class BuiltInSkinPreset(
 
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.13"
+    const val INSTALLED_LAUNCHER_VERSION = "1.14"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
@@ -339,10 +352,19 @@ object HorizonNativeBridge {
             if (decoded != null) return decoded
         }
         val preset = if (account.slimSkinModel) BuiltInSkinPreset.SLIM_ALEX else BuiltInSkinPreset.CLASSIC_STEVE
-        return generatePresetSkinBitmap(preset)
+        return generatePresetSkinBitmap(preset, context)
     }
 
-    fun generatePresetSkinBitmap(preset: BuiltInSkinPreset): Bitmap {
+    fun generatePresetSkinBitmap(preset: BuiltInSkinPreset, context: Context? = null): Bitmap {
+        if (preset == BuiltInSkinPreset.GOTHIC_MONOCHROME && context != null) {
+            runCatching {
+                val opts = BitmapFactory.Options().apply { inScaled = false }
+                val raw = BitmapFactory.decodeResource(context.resources, dev.horizon.android.R.drawable.skin_user_gothic, opts)
+                if (raw != null) {
+                    return normalizeAndCleanSkin64x64(Bitmap.createScaledBitmap(raw, 64, 64, false))
+                }
+            }
+        }
         return generateSkinBitmapFromColors(
             slimModel = preset.slimModel,
             skinTone = preset.skinTone,
@@ -474,27 +496,28 @@ object HorizonNativeBridge {
             // Check if image is a 2:1 legacy Minecraft skin (e.g., 64x32, 128x64)
             if (w == h * 2 && w >= 64 && isLikelyUvSkin(rawBmp, isLegacy = true)) {
                 val scaled32 = Bitmap.createScaledBitmap(rawBmp, 64, 32, false)
-                finalBitmap = convertLegacy64x32To64x64(scaled32)
+                finalBitmap = normalizeAndCleanSkin64x64(convertLegacy64x32To64x64(scaled32))
                 detectedSlim = detectSlimArmsFrom64x64(finalBitmap)
                 sourceLabel = "Legacy Skin 64×32 → 64×64"
-                detailMsg = "Skin Legacy (${w}×${h}) terdeteksi & dikonversi otomatis ke format Minecraft 26.3 (64×64)!"
+                detailMsg = "Skin Legacy (${w}×${h}) berhasil diimpor & dikonversi ke 64×64!"
             } else if (w == h && w >= 64 && isLikelyUvSkin(rawBmp, isLegacy = false)) {
-                // Standard 64x64 or HD square Minecraft UV skin
-                finalBitmap = if (w == 64 && h == 64) {
+                // Standard 64x64 or HD square Minecraft UV skin (including RGB JPEG skins like 413890.png!)
+                val scaled64 = if (w == 64 && h == 64) {
                     rawBmp.copy(Bitmap.Config.ARGB_8888, true)
                 } else {
                     Bitmap.createScaledBitmap(rawBmp, 64, 64, false)
                 }
+                finalBitmap = normalizeAndCleanSkin64x64(scaled64)
                 detectedSlim = detectSlimArmsFrom64x64(finalBitmap)
                 val modelName = if (detectedSlim) "Slim (3px Alex)" else "Wide (4px Steve)"
-                sourceLabel = "Minecraft UV Skin (${w}×${h})"
-                detailMsg = "Skin Minecraft valid (${w}×${h}) terdeteksi! Model lengan otomatis: $modelName."
+                sourceLabel = "Custom Skin (${w}×${h})"
+                detailMsg = "Skin Minecraft (${w}×${h}) berhasil diimpor! Model lengan: $modelName."
             } else {
                 // Regular Photo / Portrait -> Smart Photo-to-Minecraft-Skin Generator!
                 finalBitmap = convertRegularPhotoToMinecraftSkin64x64(rawBmp, account.slimSkinModel)
                 detectedSlim = account.slimSkinModel
                 sourceLabel = "Photo-to-Skin (${w}×${h} → 64×64)"
-                detailMsg = "Foto (${w}×${h}) berhasil dideteksi & diubah menjadi tekstur karakter Skin Minecraft 64×64!"
+                detailMsg = "Foto (${w}×${h}) berhasil dideteksi & diubah menjadi Skin Minecraft 64×64!"
             }
 
             FileOutputStream(outFile).use { fos ->
@@ -515,7 +538,64 @@ object HorizonNativeBridge {
         }
     }
 
+    /**
+     * Restores transparency on outer overlay layers (Hat, Jacket, Sleeves, Pants), unused UV corners,
+     * and slim-arm columns when a 64x64 skin was saved as an opaque RGB JPEG (like 413890.png),
+     * while keeping all base body parts (Head, Torso, Arms, Legs) 100% opaque!
+     */
+    fun normalizeAndCleanSkin64x64(src64: Bitmap): Bitmap {
+        val out = src64.copy(Bitmap.Config.ARGB_8888, true)
+        val c0 = out.getPixel(0, 0)
+        // If top-left corner (0,0) is already transparent, return as-is
+        if (Color.alpha(c0) < 40) {
+            return out
+        }
+        val bgR = Color.red(c0)
+        val bgG = Color.green(c0)
+        val bgB = Color.blue(c0)
+
+        fun isBaseBodyRegion(x: Int, y: Int): Boolean {
+            // Head base: (8..23, 0..7) and (0..31, 8..15)
+            if (y in 0..7 && x in 8..23) return true
+            if (y in 8..15 && x in 0..31) return true
+            // Right Leg base: (4..11, 16..19) and (0..15, 20..31)
+            if (y in 16..19 && x in 4..11) return true
+            if (y in 20..31 && x in 0..15) return true
+            // Torso base: (20..35, 16..19) and (16..39, 20..31)
+            if (y in 16..19 && x in 20..35) return true
+            if (y in 20..31 && x in 16..39) return true
+            // Right Arm base (excluding slim columns 54..55): (44..49, 16..19) and (40..53, 20..31)
+            if (y in 16..19 && x in 44..49) return true
+            if (y in 20..31 && x in 40..53) return true
+            // Left Leg base: (20..27, 48..51) and (16..31, 52..63)
+            if (y in 48..51 && x in 20..27) return true
+            if (y in 52..63 && x in 16..31) return true
+            // Left Arm base (excluding slim columns 46..47): (36..41, 48..51) and (32..45, 52..63)
+            if (y in 48..51 && x in 36..41) return true
+            if (y in 52..63 && x in 32..45) return true
+            return false
+        }
+
+        for (y in 0 until 64) {
+            for (x in 0 until 64) {
+                if (!isBaseBodyRegion(x, y)) {
+                    val px = out.getPixel(x, y)
+                    val dr = kotlin.math.abs(Color.red(px) - bgR)
+                    val dg = kotlin.math.abs(Color.green(px) - bgG)
+                    val db = kotlin.math.abs(Color.blue(px) - bgB)
+                    if (dr <= 14 && dg <= 14 && db <= 14) {
+                        out.setPixel(x, y, Color.TRANSPARENT)
+                    }
+                }
+            }
+        }
+        return out
+    }
+
     private fun isLikelyUvSkin(bmp: Bitmap, isLegacy: Boolean): Boolean {
+        if ((bmp.width == 64 && bmp.height == 64) || (isLegacy && bmp.width == 64 && bmp.height == 32)) {
+            return true
+        }
         if (!bmp.hasAlpha()) {
             // Standard 64x64 or 64x32 PNG skins might occasionally be saved without alpha in top-left if black/white,
             // so check if dimensions are exact 64x64 or 64x32 AND top-left (0,0)-(7,7) is uniform
@@ -673,7 +753,7 @@ object HorizonNativeBridge {
         val home = ensureHomeDirectories(context)
         val skinsDir = File(home, "skins").apply { mkdirs() }
         val outFile = File(skinsDir, "skin_${account.id}_${preset.id}.png")
-        val bmp = generatePresetSkinBitmap(preset)
+        val bmp = generatePresetSkinBitmap(preset, context)
         FileOutputStream(outFile).use { fos ->
             bmp.compress(Bitmap.CompressFormat.PNG, 100, fos)
         }
@@ -1865,7 +1945,7 @@ object HorizonNativeBridge {
 
     fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
         return try {
-            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 13, 0)
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 14, 0)
             val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000
                 readTimeout = 8000

@@ -182,7 +182,8 @@ class ZalithMainActivity : ComponentActivity() {
                             accounts = HorizonNativeBridge.loadSavedAccounts(context)
                         }
                         Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
-                            isLauncherHibernated = true
+                            // Do NOT hibernate on generic ON_PAUSE (e.g. when Photo Picker opens!),
+                            // otherwise rememberLauncherForActivityResult gets unmounted!
                         }
                         else -> {}
                     }
@@ -296,39 +297,51 @@ fun Modifier.animatedPressScale(
  */
 @Composable
 fun HorizonZBlackSplashOverlay() {
-    var progress by remember { mutableFloatStateOf(0.10f) }
+    var progress by remember { mutableFloatStateOf(0.14f) }
     LaunchedEffect(Unit) {
-        while (progress < 0.85f) {
-            delay(40L)
-            progress = (progress + 0.03f).coerceAtMost(0.85f)
+        while (progress < 0.30f) {
+            delay(30L)
+            progress = (progress + 0.015f).coerceAtMost(0.30f)
         }
     }
 
     val glyphH = arrayOf(
-        intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1),
-        intArrayOf(1,1,1,1,1), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1)
+        intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1),
+        intArrayOf(1,1,1,1,1,1,1,1), intArrayOf(1,1,1,1,1,1,1,1), intArrayOf(1,1,0,0,0,0,1,1),
+        intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1)
     )
-    val glyphO = arrayOf(
-        intArrayOf(0,1,1,1,0), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1),
-        intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1), intArrayOf(0,1,1,1,0)
+    // Iconic 8x8 Minecraft Creeper Face as the letter 'O'!
+    val glyphCreeperO = arrayOf(
+        intArrayOf(1,1,3,1,1,3,1,1), intArrayOf(1,3,1,1,3,1,1,1), intArrayOf(1,2,2,1,1,2,2,1),
+        intArrayOf(1,2,2,1,1,2,2,1), intArrayOf(1,1,1,2,2,1,1,1), intArrayOf(1,1,2,2,2,2,1,1),
+        intArrayOf(1,1,2,2,2,2,1,1), intArrayOf(1,1,2,1,1,2,1,1)
     )
     val glyphR = arrayOf(
-        intArrayOf(1,1,1,1,0), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1),
-        intArrayOf(1,1,1,1,0), intArrayOf(1,0,1,0,0), intArrayOf(1,0,0,1,0), intArrayOf(1,0,0,0,1)
+        intArrayOf(1,1,1,1,1,1,1,0), intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1),
+        intArrayOf(1,1,1,1,1,1,1,0), intArrayOf(1,1,1,1,1,0,0,0), intArrayOf(1,1,0,0,1,1,0,0),
+        intArrayOf(1,1,0,0,0,1,1,0), intArrayOf(1,1,0,0,0,0,1,1)
     )
     val glyphI = arrayOf(
-        intArrayOf(1,1,1,1,1), intArrayOf(0,0,1,0,0), intArrayOf(0,0,1,0,0),
-        intArrayOf(0,0,1,0,0), intArrayOf(0,0,1,0,0), intArrayOf(0,0,1,0,0), intArrayOf(1,1,1,1,1)
+        intArrayOf(1,1,1,1,1,1,1,1), intArrayOf(0,0,0,1,1,0,0,0), intArrayOf(0,0,0,1,1,0,0,0),
+        intArrayOf(0,0,0,1,1,0,0,0), intArrayOf(0,0,0,1,1,0,0,0), intArrayOf(0,0,0,1,1,0,0,0),
+        intArrayOf(0,0,0,1,1,0,0,0), intArrayOf(1,1,1,1,1,1,1,1)
     )
     val glyphZ = arrayOf(
-        intArrayOf(1,1,1,1,1), intArrayOf(0,0,0,0,1), intArrayOf(0,0,0,1,0),
-        intArrayOf(0,0,1,0,0), intArrayOf(0,1,0,0,0), intArrayOf(1,0,0,0,0), intArrayOf(1,1,1,1,1)
+        intArrayOf(1,1,1,1,1,1,1,1), intArrayOf(0,0,0,0,0,1,1,1), intArrayOf(0,0,0,0,1,1,1,0),
+        intArrayOf(0,0,0,1,1,1,0,0), intArrayOf(0,0,1,1,1,0,0,0), intArrayOf(0,1,1,1,0,0,0,0),
+        intArrayOf(1,1,1,0,0,0,0,0), intArrayOf(1,1,1,1,1,1,1,1)
+    )
+    val glyphO = arrayOf(
+        intArrayOf(0,1,1,1,1,1,1,0), intArrayOf(1,1,1,0,0,1,1,1), intArrayOf(1,1,0,0,0,0,1,1),
+        intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1),
+        intArrayOf(1,1,1,0,0,1,1,1), intArrayOf(0,1,1,1,1,1,1,0)
     )
     val glyphN = arrayOf(
-        intArrayOf(1,0,0,0,1), intArrayOf(1,1,0,0,1), intArrayOf(1,0,1,0,1),
-        intArrayOf(1,0,1,0,1), intArrayOf(1,0,0,1,1), intArrayOf(1,0,0,0,1), intArrayOf(1,0,0,0,1)
+        intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,1,0,0,0,1,1), intArrayOf(1,1,1,1,0,0,1,1),
+        intArrayOf(1,1,0,1,1,0,1,1), intArrayOf(1,1,0,0,1,1,1,1), intArrayOf(1,1,0,0,0,1,1,1),
+        intArrayOf(1,1,0,0,0,0,1,1), intArrayOf(1,1,0,0,0,0,1,1)
     )
-    val word = remember { arrayOf(glyphH, glyphO, glyphR, glyphI, glyphZ, glyphO, glyphN, glyphZ) }
+    val word = remember { arrayOf(glyphH, glyphCreeperO, glyphR, glyphI, glyphZ, glyphO, glyphN, glyphZ) }
 
     Box(
         modifier = Modifier
@@ -339,38 +352,32 @@ fun HorizonZBlackSplashOverlay() {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            val letterCols = 5
-            val letterRows = 7
+            val letterCols = 8
+            val letterRows = 8
             val gapCols = 1
             val totalCols = word.size * letterCols + (word.size - 1) * gapCols
-            val pxSize = (w * 0.52f / totalCols).coerceIn(6f, h * 0.022f)
+            val pxSize = (w * 0.50f / totalCols).coerceIn(4f, 6.2.dp.toPx())
             val logoW = totalCols * pxSize
             val logoH = letterRows * pxSize
             val startX = (w - logoW) / 2f
-            val startY = (h * 0.40f) - (logoH / 2f)
-            val shadowOff = (pxSize * 0.36f).coerceAtLeast(2f)
+            val startY = (h * 0.41f) - (logoH / 2f)
+            val depthOff = (pxSize * 0.48f).coerceAtLeast(2f)
 
+            // Pass 1: 3D Blocky Bottom Extrusion Shadow
             for (l in word.indices) {
                 val glyph = word[l]
                 val lx = startX + l * (letterCols + gapCols) * pxSize
-                val mainColor = if (l == word.lastIndex) SkyBlueAccent else Color.White
-                for (r in 0 until letterRows) {
-                    for (c in 0 until letterCols) {
-                        if (glyph[r][c] == 1) {
-                            drawRect(
-                                color = Color(0xFF2A353D),
-                                topLeft = Offset(lx + c * pxSize + shadowOff, startY + r * pxSize + shadowOff),
-                                size = Size(pxSize + 0.5f, pxSize + 0.5f)
-                            )
-                        }
-                    }
+                val shadowColor = when (l) {
+                    1 -> Color(0xFF1B4D14)
+                    word.lastIndex -> Color(0xFF1D4E63)
+                    else -> Color(0xFF2A3238)
                 }
                 for (r in 0 until letterRows) {
                     for (c in 0 until letterCols) {
-                        if (glyph[r][c] == 1) {
+                        if (glyph[r][c] != 0) {
                             drawRect(
-                                color = mainColor,
-                                topLeft = Offset(lx + c * pxSize, startY + r * pxSize),
+                                color = shadowColor,
+                                topLeft = Offset(lx + c * pxSize + depthOff * 0.6f, startY + r * pxSize + depthOff),
                                 size = Size(pxSize + 0.5f, pxSize + 0.5f)
                             )
                         }
@@ -378,13 +385,39 @@ fun HorizonZBlackSplashOverlay() {
                 }
             }
 
-            // Classic Minecraft Java Edition Progress Bar
-            val barW = (w * 0.58f).coerceAtMost(440.dp.toPx())
-            val barH = 16.dp.toPx()
+            // Pass 2: Foreground Block Letters + Creeper Face 'O'
+            for (l in word.indices) {
+                val glyph = word[l]
+                val lx = startX + l * (letterCols + gapCols) * pxSize
+                for (r in 0 until letterRows) {
+                    for (c in 0 until letterCols) {
+                        val cell = glyph[r][c]
+                        if (cell == 0) continue
+                        val blockColor = when {
+                            l == 1 -> when (cell) {
+                                2 -> Color(0xFF111712)
+                                3 -> Color(0xFF72E052)
+                                else -> if (r == 0) Color(0xFF6CE04E) else Color(0xFF49AC30)
+                            }
+                            l == word.lastIndex -> if (r == 0) Color(0xFFC2F0FF) else SkyBlueAccent
+                            else -> if (r == 0) Color.White else if (r >= 6) Color(0xFFD0D8DE) else Color(0xFFF2F6F8)
+                        }
+                        drawRect(
+                            color = blockColor,
+                            topLeft = Offset(lx + c * pxSize, startY + r * pxSize),
+                            size = Size(pxSize + 0.5f, pxSize + 0.5f)
+                        )
+                    }
+                }
+            }
+
+            // Classic Minecraft Java Progress Bar
+            val barW = (w * 0.54f).coerceAtMost(400.dp.toPx())
+            val barH = 14.dp.toPx()
             val barLeft = (w - barW) / 2f
             val barTop = h * 0.72f
-            val strokeW = 2.dp.toPx()
-            val pad = 3.2.dp.toPx()
+            val strokeW = 1.8.dp.toPx()
+            val pad = 2.8.dp.toPx()
 
             drawRect(
                 color = Color.White,
@@ -405,13 +438,13 @@ fun HorizonZBlackSplashOverlay() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = 36.dp),
+                .padding(bottom = 34.dp),
             verticalArrangement = Arrangement.Bottom,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Starting HorizonZ Native Engine (${(progress * 100).toInt()}%)",
-                fontSize = 12.sp,
+                text = "Initializing HorizonZ Rust Engine (${(progress * 100).toInt()}%)",
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFFD5DEE5)
             )
@@ -1011,16 +1044,37 @@ fun ZalithCleanLauncherScreen(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
     var installStatus by remember { mutableStateOf<AssetInstallStatus>(HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)) }
+    var skinDetectionBanner by remember { mutableStateOf<String?>(null) }
+    var skinReloadCounter by remember { mutableIntStateOf(0) }
 
-    // Cache the active account's 64x64 skin bitmap for instant rendering on Dashboard, TopBar, & Skin Studio
-    val activeSkinBitmap = remember(activeAccount.id, activeAccount.skinPath, activeAccount.slimSkinModel) {
+    // Cache the active account's 64x64 skin bitmap for instant rendering on Dashboard & Skin Studio
+    val activeSkinBitmap = remember(activeAccount.id, activeAccount.skinPath, activeAccount.slimSkinModel, skinReloadCounter) {
         HorizonNativeBridge.loadOrGenerateAccountSkinBitmap(context, activeAccount)
     }
 
-    // When hibernated or launching the game, display the pure Black Minecraft-style "HORIZONZ" Splash Screen!
-    if (isHibernated) {
-        HorizonZBlackSplashOverlay()
-        return
+    // Hoisted skinPicker at root screen level so it is NEVER disposed when Google Photos / File Picker opens!
+    val skinPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val res = HorizonNativeBridge.detectAndImportSkinFromUri(context, uri, activeAccount, config)
+            if (res.success && res.skinFile != null) {
+                val updatedList = accounts.map { acc ->
+                    if (acc.id == activeAccount.id) {
+                        acc.copy(
+                            skinPath = res.skinFile.absolutePath,
+                            slimSkinModel = res.slimModel,
+                            skinSourceLabel = res.sourceLabel
+                        )
+                    } else acc
+                }
+                onAccountsChange(updatedList)
+                skinReloadCounter += 1
+                skinDetectionBanner = res.message
+                Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+            } else {
+                skinDetectionBanner = res.message
+                Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     LaunchedEffect(config.enableSystemLog, isHibernated) {
@@ -1048,185 +1102,200 @@ fun ZalithCleanLauncherScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF14181B))
-            .windowInsetsPadding(WindowInsets.safeDrawing.union(WindowInsets.displayCutout))
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Top Header Bar with stable icon spacing (no horizontal jump when switching tabs!)
-            ZalithReferenceTopBar(
-                selectedTab = selectedTab,
-                activeAccount = activeAccount,
-                activeSkinBitmap = activeSkinBitmap,
-                installStatus = installStatus,
-                onNavigateHome = { selectedTab = ZalithNavTab.HOME },
-                onSelectTab = { selectedTab = it },
-                onOpenAccounts = { selectedTab = ZalithNavTab.ACCOUNTS },
-                onOpenDataFolder = { HorizonNativeBridge.openSystemFilesApp(context) },
-                onOpenLogs = { selectedTab = ZalithNavTab.LOGS }
-            )
+    // Smooth Morph / Connected Width Animation for the Right Launch Sidebar:
+    // Includes the 10.dp gap INSIDE the animated 192.dp width (10.dp start padding + 182.dp card)
+    // so when it morphs to 0.dp on Store/Files/Skins/Settings, there is ZERO Row gap jump ("jedug")!
+    val showRightSidebar = selectedTab == ZalithNavTab.HOME || selectedTab == ZalithNavTab.VERSIONS
+    val sidebarMorphWidth by animateDpAsState(
+        targetValue = if (showRightSidebar) 192.dp else 0.dp,
+        animationSpec = tween(durationMillis = 270, easing = FastOutSlowInEasing),
+        label = "SidebarMorphWidth"
+    )
+    val sidebarMorphAlpha by animateFloatAsState(
+        targetValue = if (showRightSidebar) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "SidebarMorphAlpha"
+    )
 
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ZalithIconRail(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF14181B))
+                .windowInsetsPadding(WindowInsets.safeDrawing.union(WindowInsets.displayCutout))
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Clean, Zero-Duplicate Top Bar:
+                // Left: Back button (only when not on HOME) + Title
+                // Right: Folder + Log (no duplicate Profile, Settings, or Download buttons!)
+                ZalithReferenceTopBar(
                     selectedTab = selectedTab,
-                    onSelectTab = { selectedTab = it }
+                    installStatus = installStatus,
+                    onNavigateHome = { selectedTab = ZalithNavTab.HOME },
+                    onOpenDataFolder = { HorizonNativeBridge.openSystemFilesApp(context) },
+                    onOpenLogs = { selectedTab = ZalithNavTab.LOGS }
                 )
 
-                // Main Content Viewport:
-                // - Occupies a constant 100% of remaining width across ALL tabs!
-                // - Uses `.using(sizeTransform = null)` (`SizeTransform = null`) so there is ZERO end-of-animation snap ("jeduk")!
-                AnimatedContent(
-                    targetState = selectedTab,
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight(),
-                    transitionSpec = {
-                        (fadeIn(animationSpec = tween(210, easing = FastOutSlowInEasing)) +
-                            slideInVertically(
-                                animationSpec = tween(210, easing = FastOutSlowInEasing),
-                                initialOffsetY = { fullHeight -> fullHeight / 16 }
-                            ))
-                            .togetherWith(
-                                fadeOut(animationSpec = tween(160, easing = FastOutLinearInEasing))
-                            )
-                            .using(sizeTransform = null)
-                    },
-                    label = "MainTabTransition"
-                ) { tab ->
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        when (tab) {
-                            ZalithNavTab.HOME -> {
-                                Row(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
-                                    ) {
-                                        CleanHomeViewport(
-                                            logEnabled = config.enableSystemLog,
-                                            isHibernated = isHibernated,
-                                            onOpenStore = { selectedTab = ZalithNavTab.STORE },
-                                            onOpenFiles = { selectedTab = ZalithNavTab.FILES },
-                                            onOpenSkins = { selectedTab = ZalithNavTab.ACCOUNTS }
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 4.dp)
+                ) {
+                    ZalithIconRail(
+                        selectedTab = selectedTab,
+                        onSelectTab = { selectedTab = it }
+                    )
+
+                    Spacer(Modifier.width(10.dp))
+
+                    // Main Morphing Content Area:
+                    // Smoothly expands/contracts its width in sync with `sidebarMorphWidth` and morphs
+                    // between pages with scale + slide + fade!
+                    AnimatedContent(
+                        targetState = selectedTab,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        transitionSpec = {
+                            val forward = targetState.ordinal >= initialState.ordinal
+                            (fadeIn(animationSpec = tween(250, easing = FastOutSlowInEasing)) +
+                                scaleIn(
+                                    initialScale = 0.96f,
+                                    animationSpec = tween(250, easing = FastOutSlowInEasing)
+                                ) +
+                                slideInVertically(
+                                    animationSpec = tween(250, easing = FastOutSlowInEasing),
+                                    initialOffsetY = { fullH -> if (forward) fullH / 14 else -fullH / 14 }
+                                ))
+                                .togetherWith(
+                                    fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)) +
+                                        scaleOut(
+                                            targetScale = 0.97f,
+                                            animationSpec = tween(180, easing = FastOutLinearInEasing)
                                         )
+                                )
+                                .using(sizeTransform = null)
+                        },
+                        label = "MainTabMorphTransition"
+                    ) { tab ->
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            when (tab) {
+                                ZalithNavTab.HOME -> CleanHomeViewport(
+                                    logEnabled = config.enableSystemLog,
+                                    isHibernated = isHibernated
+                                )
+
+                                ZalithNavTab.VERSIONS -> CleanVersionsViewport(
+                                    context = context,
+                                    installStatus = installStatus,
+                                    onStartDownload = triggerDownload,
+                                    onPauseDownload = {
+                                        HorizonNativeBridge.pauseMinecraft26Download(context, config.enableSystemLog)
+                                    },
+                                    onResumeDownload = {
+                                        HorizonNativeBridge.resumeMinecraft26Download(context, config.enableSystemLog)
+                                    },
+                                    onCancelDownload = {
+                                        HorizonNativeBridge.cancelMinecraft26Download(context, config.enableSystemLog)
+                                    },
+                                    onSmartRepairAssets = {
+                                        HorizonNativeBridge.smartRepairAssets(context, config.enableSystemLog)
                                     }
-                                    ZalithLaunchSidebar(
-                                        activeAccount = activeAccount,
-                                        activeSkinBitmap = activeSkinBitmap,
-                                        installStatus = installStatus,
-                                        onOpenAccountScreen = { selectedTab = ZalithNavTab.ACCOUNTS },
-                                        onOpenVersions = { selectedTab = ZalithNavTab.VERSIONS },
-                                        onLaunchOrDownload = handleLaunchOrDownload
-                                    )
-                                }
+                                )
+
+                                ZalithNavTab.STORE -> CleanStoreViewport(
+                                    profileSlot = config.profile,
+                                    logEnabled = config.enableSystemLog
+                                )
+
+                                ZalithNavTab.FILES -> CleanFilesViewport(
+                                    profileSlot = config.profile,
+                                    logEnabled = config.enableSystemLog,
+                                    onNavigateToStore = { selectedTab = ZalithNavTab.STORE }
+                                )
+
+                                ZalithNavTab.ACCOUNTS -> CleanAccountsAndSkinsViewport(
+                                    accounts = accounts,
+                                    activeAccount = activeAccount,
+                                    activeSkinBitmap = activeSkinBitmap,
+                                    config = config,
+                                    detectionBanner = skinDetectionBanner,
+                                    onLaunchSkinPicker = { skinPicker.launch("image/*") },
+                                    onUpdateBanner = { skinDetectionBanner = it },
+                                    onSkinUpdated = { skinReloadCounter += 1 },
+                                    onAccountsChange = onAccountsChange
+                                )
+
+                                ZalithNavTab.LOGS -> CleanLogsViewport(
+                                    logEnabled = config.enableSystemLog
+                                )
+
+                                ZalithNavTab.SETTINGS -> CleanSettingsViewport(
+                                    config = config,
+                                    onConfigChange = onConfigChange,
+                                    onOpenLogs = { selectedTab = ZalithNavTab.LOGS }
+                                )
                             }
+                        }
+                    }
 
-                            ZalithNavTab.VERSIONS -> {
-                                Row(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
-                                    ) {
-                                        CleanVersionsViewport(
-                                            context = context,
-                                            installStatus = installStatus,
-                                            onStartDownload = triggerDownload,
-                                            onPauseDownload = {
-                                                HorizonNativeBridge.pauseMinecraft26Download(context, config.enableSystemLog)
-                                            },
-                                            onResumeDownload = {
-                                                HorizonNativeBridge.resumeMinecraft26Download(context, config.enableSystemLog)
-                                            },
-                                            onCancelDownload = {
-                                                HorizonNativeBridge.cancelMinecraft26Download(context, config.enableSystemLog)
-                                            },
-                                            onSmartRepairAssets = {
-                                                HorizonNativeBridge.smartRepairAssets(context, config.enableSystemLog)
-                                            }
-                                        )
-                                    }
-                                    ZalithLaunchSidebar(
-                                        activeAccount = activeAccount,
-                                        activeSkinBitmap = activeSkinBitmap,
-                                        installStatus = installStatus,
-                                        onOpenAccountScreen = { selectedTab = ZalithNavTab.ACCOUNTS },
-                                        onOpenVersions = { selectedTab = ZalithNavTab.VERSIONS },
-                                        onLaunchOrDownload = handleLaunchOrDownload
-                                    )
+                    // Smoothly Morphing Right Launch Sidebar Container (0.dp <-> 192.dp with zero layout jolt!)
+                    if (sidebarMorphWidth > 0.5.dp) {
+                        Box(
+                            modifier = Modifier
+                                .width(sidebarMorphWidth)
+                                .fillMaxHeight()
+                                .padding(start = 10.dp)
+                                .graphicsLayer {
+                                    alpha = sidebarMorphAlpha
+                                    translationX = (1f - sidebarMorphAlpha) * 36f
                                 }
-                            }
-
-                            ZalithNavTab.STORE -> CleanStoreViewport(
-                                profileSlot = config.profile,
-                                logEnabled = config.enableSystemLog
-                            )
-
-                            ZalithNavTab.FILES -> CleanFilesViewport(
-                                profileSlot = config.profile,
-                                logEnabled = config.enableSystemLog,
-                                onNavigateToStore = { selectedTab = ZalithNavTab.STORE }
-                            )
-
-                            ZalithNavTab.ACCOUNTS -> CleanAccountsAndSkinsViewport(
-                                accounts = accounts,
+                        ) {
+                            ZalithLaunchSidebar(
                                 activeAccount = activeAccount,
                                 activeSkinBitmap = activeSkinBitmap,
-                                config = config,
-                                onAccountsChange = onAccountsChange
-                            )
-
-                            ZalithNavTab.LOGS -> CleanLogsViewport(
-                                logEnabled = config.enableSystemLog
-                            )
-
-                            ZalithNavTab.SETTINGS -> CleanSettingsViewport(
-                                config = config,
-                                onConfigChange = onConfigChange,
-                                onOpenLogs = { selectedTab = ZalithNavTab.LOGS }
+                                installStatus = installStatus,
+                                onOpenAccountScreen = { selectedTab = ZalithNavTab.ACCOUNTS },
+                                onOpenVersions = { selectedTab = ZalithNavTab.VERSIONS },
+                                onLaunchOrDownload = handleLaunchOrDownload
                             )
                         }
                     }
                 }
             }
         }
+
+        // Render the Black "HORIZONZ" Splash Screen as a top-level overlay when launching the game
+        // (without unmounting the Compose tree underneath!)
+        AnimatedVisibility(
+            visible = isHibernated,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(220))
+        ) {
+            HorizonZBlackSplashOverlay()
+        }
     }
 }
 
 /**
- * Top Bar with fixed-width left navigation pill so the title never jumps horizontally on tab change!
+ * Clean Top Bar without duplicate buttons:
+ * - Left: `<- Back` pill (only when not on Dashboard) + Title (`HorizonZ` or `HorizonZ — <Page>`)
+ * - Right: `Folder` + `Log` (Profile is in Right Sidebar / Left Rail; Settings & Downloads are in Left Rail)
  */
 @Composable
 private fun ZalithReferenceTopBar(
     selectedTab: ZalithNavTab,
-    activeAccount: ZalithAccount,
-    activeSkinBitmap: Bitmap,
     installStatus: AssetInstallStatus,
     onNavigateHome: () -> Unit,
-    onSelectTab: (ZalithNavTab) -> Unit,
-    onOpenAccounts: () -> Unit,
     onOpenDataFolder: () -> Unit,
     onOpenLogs: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(38.dp)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -1235,28 +1304,34 @@ private fun ZalithReferenceTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = if (selectedTab == ZalithNavTab.HOME) SubRailCapsuleActive else CardSlateBg,
-                modifier = Modifier.animatedPressScale(onClick = onNavigateHome)
+            AnimatedVisibility(
+                visible = selectedTab != ZalithNavTab.HOME,
+                enter = fadeIn(tween(180)) + expandHorizontally(tween(200)),
+                exit = fadeOut(tween(150)) + shrinkHorizontally(tween(180))
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = CardSlateBg,
+                    modifier = Modifier.animatedPressScale(onClick = onNavigateHome)
                 ) {
-                    Icon(
-                        imageVector = if (selectedTab == ZalithNavTab.HOME) Icons.Default.Home else Icons.Default.ArrowBack,
-                        contentDescription = "Home",
-                        tint = if (selectedTab == ZalithNavTab.HOME) SkyBlueAccent else Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Home",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = SkyBlueAccent,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "Back",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
                 }
             }
 
@@ -1270,7 +1345,7 @@ private fun ZalithReferenceTopBar(
                 Text(
                     text = if (tab == ZalithNavTab.HOME) "HorizonZ" else "HorizonZ — ${tab.title}",
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
             }
@@ -1296,54 +1371,10 @@ private fun ZalithReferenceTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Folder,
-                contentDescription = "Data Folder",
-                tint = Color(0xFFD5DEE5),
-                modifier = Modifier
-                    .size(19.dp)
-                    .animatedPressScale(onClick = onOpenDataFolder)
-            )
-
-            // Account & Skin Pill in TopBar showing live player head avatar!
             Surface(
                 shape = RoundedCornerShape(50),
-                color = if (selectedTab == ZalithNavTab.ACCOUNTS) SubRailCapsuleActive else CardSlateBg,
-                modifier = Modifier.animatedPressScale(onClick = onOpenAccounts)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    MinecraftSkinHeadAvatar(
-                        skinBitmap = activeSkinBitmap,
-                        size = 18.dp,
-                        cornerRadius = 4.dp
-                    )
-                    Text(
-                        text = activeAccount.username,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (selectedTab == ZalithNavTab.ACCOUNTS) SkyBlueAccent else Color.White,
-                        maxLines = 1
-                    )
-                }
-            }
-
-            Icon(
-                imageVector = Icons.Default.Download,
-                contentDescription = "Downloads",
-                tint = if (selectedTab == ZalithNavTab.VERSIONS) SkyBlueAccent else Color(0xFFD5DEE5),
-                modifier = Modifier
-                    .size(20.dp)
-                    .animatedPressScale { onSelectTab(ZalithNavTab.VERSIONS) }
-            )
-
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = if (selectedTab == ZalithNavTab.SETTINGS) SubRailCapsuleActive else CardSlateBg,
-                modifier = Modifier.animatedPressScale { onSelectTab(ZalithNavTab.SETTINGS) }
+                color = CardSlateBg,
+                modifier = Modifier.animatedPressScale(onClick = onOpenDataFolder)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -1351,17 +1382,12 @@ private fun ZalithReferenceTopBar(
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = if (selectedTab == ZalithNavTab.SETTINGS) SkyBlueAccent else Color.White,
+                        imageVector = Icons.Default.Folder,
+                        contentDescription = "Data Folder",
+                        tint = Color(0xFFD5DEE5),
                         modifier = Modifier.size(15.dp)
                     )
-                    Text(
-                        text = "Settings",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White
-                    )
+                    Text("Folder", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
 
@@ -1456,15 +1482,12 @@ private fun ZalithIconRail(
 /**
  * Main Dashboard Viewport:
  * - 18 Authentic HD 16:9 Minecraft Wallpapers cycling every 5 seconds with smooth crossfade.
- * - Clean Minecraft Grass Cube Icon + Quick-Action Icon Pills (`Mods`, `Store`, `Skins`, `Wallpaper`).
+ * - Zero duplicate navigation buttons on top-right (only a single clean `Wallpaper` button).
  */
 @Composable
 private fun CleanHomeViewport(
     logEnabled: Boolean,
-    isHibernated: Boolean,
-    onOpenStore: () -> Unit,
-    onOpenFiles: () -> Unit,
-    onOpenSkins: () -> Unit
+    isHibernated: Boolean
 ) {
     val context = LocalContext.current
     var customWallpapers by remember { mutableStateOf(HorizonNativeBridge.getCustomWallpapers(context)) }
@@ -1555,36 +1578,19 @@ private fun CleanHomeViewport(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                Color.Black.copy(alpha = 0.10f),
+                                Color.Black.copy(alpha = 0.08f),
                                 Color.Black.copy(alpha = 0.68f)
                             )
                         )
                     )
             )
 
-            // Top-Right Quick-Action Icon Pills (Mods, Store, Skins, Wallpaper)
-            Row(
+            // Single non-duplicated Wallpaper button in top-right corner
+            Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(14.dp)
             ) {
-                DashboardQuickIconPill(
-                    icon = Icons.Default.Extension,
-                    label = "Mods",
-                    onClick = onOpenFiles
-                )
-                DashboardQuickIconPill(
-                    icon = Icons.Default.Storefront,
-                    label = "Store",
-                    onClick = onOpenStore
-                )
-                DashboardQuickIconPill(
-                    icon = Icons.Default.Checkroom,
-                    label = "Skins",
-                    onClick = onOpenSkins
-                )
                 DashboardQuickIconPill(
                     icon = Icons.Default.Wallpaper,
                     label = "Wallpaper",
@@ -1604,19 +1610,17 @@ private fun CleanHomeViewport(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     MinecraftGrassCubeIcon(size = 40.dp)
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "Minecraft",
-                                fontSize = 30.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color.White
-                            )
-                            LavenderTagBadge(text = "26.3")
-                        }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Minecraft",
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                        LavenderTagBadge(text = "26.3")
                     }
                 }
 
@@ -1658,11 +1662,11 @@ private fun DashboardQuickIconPill(
 ) {
     Surface(
         shape = RoundedCornerShape(50),
-        color = Color(0xFF181E22).copy(alpha = 0.74f),
+        color = Color(0xFF181E22).copy(alpha = 0.76f),
         modifier = Modifier.animatedPressScale(onClick = onClick)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
@@ -1684,8 +1688,8 @@ private fun DashboardQuickIconPill(
 
 /**
  * Full-Viewport Account Profile & Skin Studio (`ZalithNavTab.ACCOUNTS`):
- * - Left Sub-Navigation Rail: `Skin Studio` (Deteksi Foto/Skin PNG, Live 2D Front/Back Minecraft Character Preview,
- *   Toggle Lengan Wide 4px vs Slim 3px, & 5 Preset Skins) and `Accounts` (Kelola Akun Offline & Microsoft).
+ * - Clean, well-proportioned cards with zero vertical badge wrapping (`In-Game Ready` stays on 1 line!).
+ * - Uses hoisted `onLaunchSkinPicker` so Google Photos selection always succeeds and updates immediately!
  */
 @Composable
 private fun CleanAccountsAndSkinsViewport(
@@ -1693,37 +1697,17 @@ private fun CleanAccountsAndSkinsViewport(
     activeAccount: ZalithAccount,
     activeSkinBitmap: Bitmap,
     config: HorizonConfigState,
+    detectionBanner: String?,
+    onLaunchSkinPicker: () -> Unit,
+    onUpdateBanner: (String?) -> Unit,
+    onSkinUpdated: () -> Unit,
     onAccountsChange: (List<ZalithAccount>) -> Unit
 ) {
     val context = LocalContext.current
     var selectedSubTab by remember { mutableStateOf(AccountSubCategory.SKIN_STUDIO) }
     var showBackView by remember { mutableStateOf(false) }
-    var detectionBanner by remember { mutableStateOf<String?>(null) }
     var newAccountName by remember { mutableStateOf("") }
     var selectedAccountType by remember { mutableStateOf(AccountType.OFFLINE) }
-
-    val skinPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            val res = HorizonNativeBridge.detectAndImportSkinFromUri(context, uri, activeAccount, config)
-            if (res.success && res.skinFile != null) {
-                val updatedList = accounts.map { acc ->
-                    if (acc.id == activeAccount.id) {
-                        acc.copy(
-                            skinPath = res.skinFile.absolutePath,
-                            slimSkinModel = res.slimModel,
-                            skinSourceLabel = res.sourceLabel
-                        )
-                    } else acc
-                }
-                onAccountsChange(updatedList)
-                detectionBanner = res.message
-                Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
-            } else {
-                detectionBanner = res.message
-                Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
 
     Row(
         modifier = Modifier.fillMaxSize(),
@@ -1761,13 +1745,13 @@ private fun CleanAccountsAndSkinsViewport(
                             shape = RoundedCornerShape(22.dp),
                             color = CardSlateBg,
                             modifier = Modifier
-                                .width(220.dp)
+                                .width(196.dp)
                                 .fillMaxHeight()
                         ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(14.dp),
+                                    .padding(12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -1778,25 +1762,28 @@ private fun CleanAccountsAndSkinsViewport(
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                        modifier = Modifier.weight(1f)
                                     ) {
                                         MinecraftSkinHeadAvatar(
                                             skinBitmap = activeSkinBitmap,
                                             size = 26.dp,
                                             cornerRadius = 6.dp
                                         )
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = activeAccount.username,
-                                                fontSize = 13.sp,
+                                                fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White,
-                                                maxLines = 1
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = if (activeAccount.slimSkinModel) "Slim (3px Alex)" else "Wide (4px Steve)",
+                                                text = if (activeAccount.slimSkinModel) "Slim (3px)" else "Wide (4px)",
                                                 fontSize = 10.sp,
-                                                color = SkyBlueAccent
+                                                color = SkyBlueAccent,
+                                                maxLines = 1
                                             )
                                         }
                                     }
@@ -1836,13 +1823,13 @@ private fun CleanAccountsAndSkinsViewport(
                                         showBack = showBackView,
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(10.dp)
+                                            .padding(8.dp)
                                     )
                                 }
 
                                 Text(
                                     text = activeAccount.skinSourceLabel,
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     color = MutedSubtitleText,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -1850,13 +1837,13 @@ private fun CleanAccountsAndSkinsViewport(
                             }
                         }
 
-                        // Right Column: Photo/PNG Skin Detector, Arm Model Selector, & Built-in Presets
+                        // Right Column: Compact, Unclipped Skin Importer + Arm Model Selector + Preset List
                         Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(18.dp),
@@ -1864,8 +1851,8 @@ private fun CleanAccountsAndSkinsViewport(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1873,23 +1860,19 @@ private fun CleanAccountsAndSkinsViewport(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Skin Detector & Importer",
-                                                    fontSize = 15.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White
-                                                )
-                                                LavenderTagBadge(text = "In-Game Ready")
-                                            }
-                                            Spacer(Modifier.height(2.dp))
                                             Text(
-                                                text = "Pilih file Skin PNG (64×64 / 64×32) atau Foto Galeri — otomatis dideteksi & langsung terpasang di Minecraft 26.3!",
-                                                fontSize = 12.sp,
-                                                color = MutedSubtitleText
+                                                text = "Custom Skin & Photo Importer",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "Import file Skin PNG/JPG (64×64 / 64×32) atau Foto Galeri untuk digunakan di in-game.",
+                                                fontSize = 11.sp,
+                                                color = MutedSubtitleText,
+                                                maxLines = 2
                                             )
                                         }
 
@@ -1898,24 +1881,25 @@ private fun CleanAccountsAndSkinsViewport(
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
                                             color = SkyBlueAccent,
-                                            modifier = Modifier.animatedPressScale { skinPicker.launch("image/*") }
+                                            modifier = Modifier.animatedPressScale(onClick = onLaunchSkinPicker)
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.AddPhotoAlternate,
                                                     contentDescription = "Pilih Foto / Skin",
                                                     tint = SkyBlueDarkText,
-                                                    modifier = Modifier.size(17.dp)
+                                                    modifier = Modifier.size(16.dp)
                                                 )
                                                 Text(
-                                                    text = "Pilih Foto / Skin",
+                                                    text = "Import Skin",
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = SkyBlueDarkText
+                                                    color = SkyBlueDarkText,
+                                                    maxLines = 1
                                                 )
                                             }
                                         }
@@ -1923,20 +1907,20 @@ private fun CleanAccountsAndSkinsViewport(
 
                                     detectionBanner?.let { bannerMsg ->
                                         Surface(
-                                            shape = RoundedCornerShape(12.dp),
+                                            shape = RoundedCornerShape(10.dp),
                                             color = SubRailCapsuleActive,
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.Verified,
                                                     contentDescription = null,
                                                     tint = SkyBlueAccent,
-                                                    modifier = Modifier.size(16.dp)
+                                                    modifier = Modifier.size(15.dp)
                                                 )
                                                 Text(
                                                     text = bannerMsg,
@@ -1956,11 +1940,11 @@ private fun CleanAccountsAndSkinsViewport(
                                     ) {
                                         Text(
                                             text = "Model Lengan:",
-                                            fontSize = 12.sp,
+                                            fontSize = 11.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = Color.White
                                         )
-                                        listOf(false to "Classic Wide (4px Steve)", true to "Slim (3px Alex)").forEach { (isSlim, label) ->
+                                        listOf(false to "Wide (4px Steve)", true to "Slim (3px Alex)").forEach { (isSlim, label) ->
                                             val selected = activeAccount.slimSkinModel == isSlim
                                             Surface(
                                                 shape = RoundedCornerShape(50),
@@ -1970,6 +1954,7 @@ private fun CleanAccountsAndSkinsViewport(
                                                         if (acc.id == activeAccount.id) acc.copy(slimSkinModel = isSlim) else acc
                                                     }
                                                     onAccountsChange(updatedList)
+                                                    onSkinUpdated()
                                                 }
                                             ) {
                                                 Text(
@@ -1977,7 +1962,8 @@ private fun CleanAccountsAndSkinsViewport(
                                                     fontSize = 11.sp,
                                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                                     color = if (selected) SkyBlueDarkText else Color.White,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                                    maxLines = 1,
+                                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                                                 )
                                             }
                                         }
@@ -1985,24 +1971,24 @@ private fun CleanAccountsAndSkinsViewport(
                                 }
                             }
 
-                            // Built-in Preset Skins Card
+                            // Built-in Preset Skins Card (including the User's Gothic Monochrome Skin!)
                             Surface(
                                 shape = RoundedCornerShape(18.dp),
                                 color = CardSlateBg,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
                                     Text(
-                                        text = "Preset Skins (1-Tap Apply to In-Game)",
-                                        fontSize = 14.sp,
+                                        text = "Koleksi Skin Siap Pakai (1-Tap In-Game)",
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White
                                     )
                                     BuiltInSkinPreset.entries.forEach { preset ->
-                                        val presetBmp = remember(preset) { HorizonNativeBridge.generatePresetSkinBitmap(preset) }
+                                        val presetBmp = remember(preset) { HorizonNativeBridge.generatePresetSkinBitmap(preset, context) }
                                         val isCurrent = activeAccount.skinSourceLabel == "Preset: ${preset.title}"
                                         Surface(
                                             shape = RoundedCornerShape(14.dp),
@@ -2018,12 +2004,13 @@ private fun CleanAccountsAndSkinsViewport(
                                                     )
                                                     val updatedList = accounts.map { if (it.id == activeAccount.id) updatedAcc else it }
                                                     onAccountsChange(updatedList)
-                                                    detectionBanner = "Skin '${preset.title}' berhasil dipasang untuk in-game Minecraft 26.3!"
+                                                    onSkinUpdated()
+                                                    onUpdateBanner("Skin '${preset.title}' aktif & siap digunakan di in-game!")
                                                     Toast.makeText(context, "Skin '${preset.title}' terpasang!", Toast.LENGTH_SHORT).show()
                                                 }
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -2034,39 +2021,40 @@ private fun CleanAccountsAndSkinsViewport(
                                                 ) {
                                                     MinecraftSkinHeadAvatar(
                                                         skinBitmap = presetBmp,
-                                                        size = 34.dp,
-                                                        cornerRadius = 8.dp
+                                                        size = 32.dp,
+                                                        cornerRadius = 7.dp
                                                     )
-                                                    Column {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = preset.title,
-                                                                fontSize = 13.sp,
-                                                                fontWeight = FontWeight.SemiBold,
-                                                                color = Color.White
-                                                            )
-                                                            LavenderTagBadge(text = if (preset.slimModel) "Slim 3px" else "Wide 4px")
-                                                        }
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = preset.title,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
                                                         Text(
                                                             text = preset.subtitle,
-                                                            fontSize = 11.sp,
-                                                            color = MutedSubtitleText
+                                                            fontSize = 10.sp,
+                                                            color = MutedSubtitleText,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
                                                 }
 
+                                                Spacer(Modifier.width(8.dp))
+
                                                 Surface(
-                                                    shape = RoundedCornerShape(10.dp),
+                                                    shape = RoundedCornerShape(9.dp),
                                                     color = if (isCurrent) SkyBlueAccent else Color(0xFF344149)
                                                 ) {
                                                     Text(
-                                                        text = if (isCurrent) "Active" else "Use Skin",
+                                                        text = if (isCurrent) "Active" else "Pakai",
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = if (isCurrent) SkyBlueDarkText else Color.White,
+                                                        maxLines = 1,
                                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                                     )
                                                 }
@@ -2099,7 +2087,6 @@ private fun CleanAccountsAndSkinsViewport(
                                 color = Color.White
                             )
 
-                            // Add New Account Bar
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
                                 color = CardRowBg,
@@ -2240,7 +2227,7 @@ private fun CleanAccountsAndSkinsViewport(
                                                 size = 38.dp,
                                                 cornerRadius = 9.dp
                                             )
-                                            Column {
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2249,7 +2236,8 @@ private fun CleanAccountsAndSkinsViewport(
                                                         text = acc.username,
                                                         fontSize = 14.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color.White
+                                                        color = Color.White,
+                                                        maxLines = 1
                                                     )
                                                     LavenderTagBadge(text = acc.accountType.badge)
                                                     if (acc.isActive) {
@@ -2257,9 +2245,11 @@ private fun CleanAccountsAndSkinsViewport(
                                                     }
                                                 }
                                                 Text(
-                                                    text = "Skin: ${acc.skinSourceLabel} • UUID: ${acc.uuid.take(13)}...",
+                                                    text = "Skin: ${acc.skinSourceLabel}",
                                                     fontSize = 11.sp,
-                                                    color = MutedSubtitleText
+                                                    color = MutedSubtitleText,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                             }
                                         }
@@ -2314,12 +2304,6 @@ private fun CleanAccountsAndSkinsViewport(
     }
 }
 
-/**
- * Full-Viewport Redesigned System & Game Runtime Logs Screen (`ZalithNavTab.LOGS`):
- * - Left Sub-Navigation Rail: `All Logs`, `Launcher`, `Downloader`, `Game Engine`
- * - Top Pill Search & Severity Filter Toolbar (`ALL`, `INFO`, `DL`, `WARN`, `ERR`) + Copy & Clear buttons
- * - Color-coded structured log entries!
- */
 @Composable
 private fun CleanLogsViewport(
     logEnabled: Boolean
