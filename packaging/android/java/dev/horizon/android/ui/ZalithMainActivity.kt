@@ -1043,6 +1043,7 @@ fun ZalithCleanLauncherScreen(
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(ZalithNavTab.HOME) }
+    var storeInitialCategory by remember { mutableStateOf(StoreCategory.MOD) }
     var installStatus by remember { mutableStateOf<AssetInstallStatus>(HorizonNativeBridge.pollInstallProgress(context, config.enableSystemLog)) }
     var skinDetectionBanner by remember { mutableStateOf<String?>(null) }
     var skinReloadCounter by remember { mutableIntStateOf(0) }
@@ -1207,13 +1208,20 @@ fun ZalithCleanLauncherScreen(
 
                                 ZalithNavTab.STORE -> CleanStoreViewport(
                                     profileSlot = config.profile,
-                                    logEnabled = config.enableSystemLog
+                                    logEnabled = config.enableSystemLog,
+                                    initialCategory = storeInitialCategory
                                 )
 
                                 ZalithNavTab.FILES -> CleanFilesViewport(
                                     profileSlot = config.profile,
                                     logEnabled = config.enableSystemLog,
-                                    onNavigateToStore = { selectedTab = ZalithNavTab.STORE }
+                                    onNavigateToStoreCategory = { targetCat ->
+                                        storeInitialCategory = targetCat
+                                        selectedTab = ZalithNavTab.STORE
+                                    },
+                                    onQuickPlayWorld = {
+                                        handleLaunchOrDownload()
+                                    }
                                 )
 
                                 ZalithNavTab.ACCOUNTS -> CleanAccountsAndSkinsViewport(
@@ -2898,29 +2906,94 @@ private fun CleanVersionsViewport(
 @Composable
 private fun CleanStoreViewport(
     profileSlot: Int,
-    logEnabled: Boolean
+    logEnabled: Boolean,
+    initialCategory: StoreCategory = StoreCategory.MOD
 ) {
     val context = LocalContext.current
-    var selectedCategory by remember { mutableStateOf(StoreCategory.HORIZON_MODS) }
+    var selectedCategory by remember(initialCategory) { mutableStateOf(initialCategory) }
     var searchQuery by remember { mutableStateOf("") }
+    var gameVersionQuery by remember { mutableStateOf("") }
+    var targetPlatform by remember { mutableStateOf(StoreTargetPlatform.MODRINTH) }
+    var sortOption by remember { mutableStateOf(StoreSortOption.RELEVANCE) }
+    var selectedCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedLoader by remember { mutableStateOf("None Selected") }
+    var currentPage by remember { mutableIntStateOf(1) }
+    var totalPages by remember { mutableIntStateOf(1) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
+
+    // Expandable filter accordion states in Right Sidebar (matching 429798.mp4 00:22–00:29)
+    var expandPlatform by remember { mutableStateOf(false) }
+    var expandSortBy by remember { mutableStateOf(false) }
+    var expandCategory by remember { mutableStateOf(false) }
+    var expandLoader by remember { mutableStateOf(false) }
+
+    // Drill-down selected project for Version Accordion & Right Detail Card (matching 429798.mp4 00:10–00:16 & 00:33–00:39)
+    var selectedProject by remember { mutableStateOf<StoreCatalogItem?>(null) }
+    var projectVersions by remember { mutableStateOf<List<StoreVersionRelease>>(emptyList()) }
+    var isLoadingVersions by remember { mutableStateOf(false) }
+    var showOnlyMcReleases by remember { mutableStateOf(true) }
+    var searchMcVersionsQuery by remember { mutableStateOf("") }
+    var expandedMcVerGroups by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     var isLoading by remember { mutableStateOf(false) }
     var catalogItems by remember { mutableStateOf<List<StoreCatalogItem>>(emptyList()) }
+    var favoriteIds by remember { mutableStateOf(HorizonNativeBridge.getFavoriteProjectIds(context)) }
     var storeProgress by remember { mutableStateOf(StoreDownloadProgress()) }
     var pendingIncompatibleItem by remember { mutableStateOf<StoreCatalogItem?>(null) }
-    var infoModalItem by remember { mutableStateOf<StoreCatalogItem?>(null) }
     var showCancelStoreDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(selectedCategory, searchQuery, refreshTrigger) {
-        isLoading = true
-        val fetched = withContext(Dispatchers.IO) {
-            when (selectedCategory) {
-                StoreCategory.HORIZON_MODS -> HorizonNativeBridge.fetchHorizonModsCatalog(searchQuery)
-                StoreCategory.MODRINTH_PACKS -> HorizonNativeBridge.fetchModrinthResourcePacks(searchQuery)
-            }
+    val modpackImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            HorizonNativeBridge.importUriToDestination(
+                context,
+                uri,
+                "mods",
+                "modpack_${System.currentTimeMillis()}.mrpack",
+                logEnabled
+            )
+            Toast.makeText(context, "Modpack berhasil diimpor!", Toast.LENGTH_SHORT).show()
         }
-        catalogItems = fetched
+    }
+
+    LaunchedEffect(
+        selectedCategory,
+        searchQuery,
+        gameVersionQuery,
+        targetPlatform,
+        sortOption,
+        selectedCategories,
+        selectedLoader,
+        currentPage,
+        refreshTrigger
+    ) {
+        isLoading = true
+        val pageRes = withContext(Dispatchers.IO) {
+            HorizonNativeBridge.searchStoreProjects(
+                category = selectedCategory,
+                searchQuery = searchQuery,
+                gameVersionFilter = gameVersionQuery,
+                targetPlatform = targetPlatform,
+                sortOption = sortOption,
+                selectedCategories = selectedCategories,
+                selectedLoader = if (selectedLoader == "None Selected") null else selectedLoader,
+                page = currentPage
+            )
+        }
+        catalogItems = pageRes.items
+        totalPages = pageRes.totalPages
         isLoading = false
+    }
+
+    LaunchedEffect(selectedProject) {
+        val proj = selectedProject ?: return@LaunchedEffect
+        isLoadingVersions = true
+        val vers = withContext(Dispatchers.IO) {
+            HorizonNativeBridge.fetchProjectVersionReleases(proj)
+        }
+        projectVersions = vers
+        val firstVerGroup = vers.firstOrNull()?.primaryMcVersion ?: "26.2"
+        expandedMcVerGroups = setOf(firstVerGroup)
+        isLoadingVersions = false
     }
 
     val startItemDownload = { item: StoreCatalogItem ->
@@ -2969,24 +3042,6 @@ private fun CleanStoreViewport(
         )
     }
 
-    infoModalItem?.let { item ->
-        AlertDialog(
-            onDismissRequest = { infoModalItem = null },
-            title = { Text(item.title, style = MaterialTheme.typography.titleMedium) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Author: ${item.author}", fontSize = 12.sp)
-                    Text("Version: v${item.version} (MC ${item.supportedMcVersions.joinToString(", ")})", fontSize = 12.sp)
-                    Text("File: ${item.fileName}", fontSize = 12.sp)
-                    Text(item.summary, fontSize = 12.sp, color = MutedSubtitleText)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { infoModalItem = null }) { Text("Close") }
-            }
-        )
-    }
-
     if (showCancelStoreDialog) {
         AlertDialog(
             onDismissRequest = { showCancelStoreDialog = false },
@@ -3022,265 +3077,1074 @@ private fun CleanStoreViewport(
         modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // 1. Left Sub-Navigation Rail (Mod, Resource Pack, Saves, Shader Pack, Modpack — matching 429798.mp4)
         ZalithSubCategoryRail(
             items = StoreCategory.entries,
             selectedItem = selectedCategory,
-            itemLabel = { if (it == StoreCategory.HORIZON_MODS) "Mods" else "Resource Packs" },
-            itemIcon = { if (it == StoreCategory.HORIZON_MODS) Icons.Default.Extension else Icons.Default.Brush },
-            onSelect = { selectedCategory = it }
+            itemLabel = { it.label },
+            itemIcon = {
+                when (it) {
+                    StoreCategory.MOD -> Icons.Default.Extension
+                    StoreCategory.RESOURCE_PACK -> Icons.Default.Brush
+                    StoreCategory.SAVES -> Icons.Default.Public
+                    StoreCategory.SHADER_PACK -> Icons.Default.Lightbulb
+                    StoreCategory.MODPACK -> Icons.Default.Inventory2
+                }
+            },
+            onSelect = {
+                selectedCategory = it
+                selectedProject = null
+                currentPage = 1
+            }
         )
 
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = CardSlateBg,
+        // 2. Center + Right Columns (switches smoothly between 3-Column Browser & Project Version Accordion View)
+        AnimatedContent(
+            targetState = selectedProject,
+            transitionSpec = {
+                (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { w -> if (targetState != null) w / 12 else -w / 12 })
+                    .togetherWith(fadeOut(tween(160)))
+                    .using(sizeTransform = null)
+            },
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+                .fillMaxHeight(),
+            label = "StoreMasterDetailTransition"
+        ) { detailProj ->
+            if (detailProj == null) {
+                // ============================================================
+                // MODE 1: 3-COLUMN STORE BROWSER (429798.mp4 00:00–00:09, 00:18–00:32)
+                // ============================================================
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.FilterAlt,
-                        contentDescription = "Filter",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = CardRowBg,
+                    // Center Project List + Floating Top-Right Pagination Bar (`< 1 / 3894 >`)
+                    Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(36.dp)
+                            .fillMaxHeight()
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 14.dp),
-                            contentAlignment = Alignment.CenterStart
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (searchQuery.isEmpty()) {
+                            // Active Download Progress Banner (if downloading)
+                            AnimatedVisibility(visible = storeProgress.running) {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = SubRailCapsuleActive,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Downloading ${storeProgress.activeTitle} (${storeProgress.percent}%)",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    maxLines = 1
+                                                )
+                                                Text(
+                                                    text = "${storeProgress.speedText} • ${storeProgress.statusText}",
+                                                    fontSize = 10.sp,
+                                                    color = MutedSubtitleText,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = SkyBlueAccent,
+                                                    modifier = Modifier.animatedPressScale {
+                                                        val nextPaused = !HorizonNativeBridge.storeDownloadPaused.get()
+                                                        HorizonNativeBridge.storeDownloadPaused.set(nextPaused)
+                                                    }
+                                                ) {
+                                                    Text(
+                                                        text = if (storeProgress.paused) "Resume" else "Pause",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = SkyBlueDarkText,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFF3A2326),
+                                                    modifier = Modifier.animatedPressScale { showCancelStoreDialog = true }
+                                                ) {
+                                                    Text(
+                                                        text = "Cancel",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = Color(0xFFFF8A80),
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        LinearProgressIndicator(
+                                            progress = { (storeProgress.percent / 100f).coerceIn(0f, 1f) },
+                                            color = SkyBlueAccent,
+                                            trackColor = Color(0xFF263238),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(5.dp)
+                                                .clip(RoundedCornerShape(50))
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isLoading) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    LinearProgressIndicator(
+                                        color = SkyBlueAccent,
+                                        trackColor = CardSlateBg,
+                                        modifier = Modifier
+                                            .width(180.dp)
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(50))
+                                    )
+                                }
+                            } else if (catalogItems.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = CardSlateBg
+                                    ) {
+                                        Text(
+                                            text = "No projects found matching your filter.",
+                                            fontSize = 12.sp,
+                                            color = MutedSubtitleText,
+                                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(top = 42.dp, bottom = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(catalogItems, key = { "${it.platform.name}_${it.id}" }) { item ->
+                                        val isFav = item.id in favoriteIds
+                                        Surface(
+                                            shape = RoundedCornerShape(18.dp),
+                                            color = CardSlateBg,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .animatedPressScale { selectedProject = item }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Left 50dp Async Icon Badge
+                                                StoreAsyncProjectIcon(
+                                                    iconUrl = item.iconUrl,
+                                                    title = item.title,
+                                                    isMod = item.category == StoreCategory.MOD || item.category == StoreCategory.MODPACK,
+                                                    isWorld = item.category == StoreCategory.SAVES,
+                                                    size = 50.dp
+                                                )
+
+                                                Spacer(Modifier.width(12.dp))
+
+                                                // Middle Title + "By <Author>" + 2-line Summary + Tags (matching 429798.mp4)
+                                                Column(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.Bottom,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = item.title,
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = "By ${item.author}",
+                                                            fontSize = 11.sp,
+                                                            color = MutedSubtitleText,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = item.summary,
+                                                        fontSize = 11.sp,
+                                                        color = Color(0xFFD0D8DE),
+                                                        maxLines = 2,
+                                                        lineHeight = 14.sp,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (item.displayTags.isNotEmpty()) {
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            item.displayTags.take(5).forEach { tag ->
+                                                                Text(
+                                                                    text = tag,
+                                                                    fontSize = 10.sp,
+                                                                    fontWeight = FontWeight.Medium,
+                                                                    color = MutedSubtitleText,
+                                                                    maxLines = 1
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Spacer(Modifier.width(10.dp))
+
+                                                // Right Column: Modrinth/Horizon Badge + Download Count + Favorite Button (429798.mp4)
+                                                Column(
+                                                    horizontalAlignment = Alignment.End,
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    StorePlatformBadge(platform = item.platform)
+
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.TrendingUp,
+                                                            contentDescription = null,
+                                                            tint = MutedSubtitleText,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Text(
+                                                            text = item.formattedDownloads,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color(0xFFD5DEE5)
+                                                        )
+                                                    }
+
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                        modifier = Modifier.animatedPressScale {
+                                                            favoriteIds = HorizonNativeBridge.toggleProjectFavorite(context, item.id)
+                                                        }
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                            contentDescription = "Favorite",
+                                                            tint = if (isFav) Color(0xFFFF6E6E) else MutedSubtitleText,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Text(
+                                                            text = "Favorite",
+                                                            fontSize = 10.sp,
+                                                            color = if (isFav) Color(0xFFFF8A80) else MutedSubtitleText
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Floating Top-Right Pagination Pill (`1 / 3894   <   >`) matching 429798.mp4 00:00–00:09!
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = Color(0xFF283036).copy(alpha = 0.94f),
+                            shadowElevation = 6.dp,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 2.dp, end = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 Text(
-                                    text = if (selectedCategory == StoreCategory.HORIZON_MODS) "Search playhorizon.dev/mods..."
-                                    else "Search Modrinth Resource Packs...",
+                                    text = "$currentPage / $totalPages",
                                     fontSize = 12.sp,
-                                    color = MutedSubtitleText
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ChevronLeft,
+                                    contentDescription = "Previous Page",
+                                    tint = if (currentPage > 1) Color.White else MutedSubtitleText.copy(alpha = 0.4f),
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .animatedPressScale(enabled = currentPage > 1) {
+                                            if (currentPage > 1) currentPage -= 1
+                                        }
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = "Next Page",
+                                    tint = if (currentPage < totalPages) Color.White else MutedSubtitleText.copy(alpha = 0.4f),
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .animatedPressScale(enabled = currentPage < totalPages) {
+                                            if (currentPage < totalPages) currentPage += 1
+                                        }
                                 )
                             }
-                            BasicTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                singleLine = true,
-                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
-                                cursorBrush = SolidColor(SkyBlueAccent),
-                                modifier = Modifier.fillMaxWidth()
-                            )
                         }
                     }
 
-                    Text(
-                        text = if (selectedCategory == StoreCategory.HORIZON_MODS) "Source: playhorizon.dev" else "Source: Modrinth",
-                        fontSize = 11.sp,
-                        color = MutedSubtitleText
-                    )
-
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh",
-                        tint = Color.White,
+                    // 3. Right Filter & Search Sidebar (`210.dp`, matching 429798.mp4 00:00–00:29)
+                    Column(
                         modifier = Modifier
-                            .size(20.dp)
-                            .animatedPressScale { refreshTrigger += 1 }
-                    )
-                }
+                            .width(210.dp)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Search Name Pill Box
+                        StoreRightSearchPill(
+                            value = searchQuery,
+                            placeholder = "Search Name",
+                            onValueChange = {
+                                searchQuery = it
+                                currentPage = 1
+                            }
+                        )
 
-                AnimatedVisibility(visible = storeProgress.running) {
+                        // Game Version Pill Box
+                        StoreRightSearchPill(
+                            value = gameVersionQuery,
+                            placeholder = "Game Version",
+                            onValueChange = {
+                                gameVersionQuery = it
+                                currentPage = 1
+                            }
+                        )
+
+                        // Import Modpack Button when on Modpack category (`00:44` in 429798.mp4)
+                        if (selectedCategory == StoreCategory.MODPACK) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = CardSlateBg,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animatedPressScale { modpackImportPicker.launch("*/*") }
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Import Modpack",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+
+                        // Target Platform Accordion Card
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = CardSlateBg,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { expandPlatform = !expandPlatform }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Target Platform", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                        StorePlatformBadge(platform = targetPlatform)
+                                    }
+                                    Icon(
+                                        imageVector = if (expandPlatform) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                AnimatedVisibility(visible = expandPlatform) {
+                                    Column(
+                                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        StoreTargetPlatform.entries.forEach { plat ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        targetPlatform = plat
+                                                        currentPage = 1
+                                                        expandPlatform = false
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = targetPlatform == plat,
+                                                    onClick = {
+                                                        targetPlatform = plat
+                                                        currentPage = 1
+                                                        expandPlatform = false
+                                                    },
+                                                    colors = RadioButtonDefaults.colors(selectedColor = SkyBlueAccent),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(plat.label, fontSize = 11.sp, color = Color.White)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Sort By Accordion Card (`00:23` in 429798.mp4)
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = CardSlateBg,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { expandSortBy = !expandSortBy }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Sort By", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                        LavenderTagBadge(text = sortOption.label)
+                                    }
+                                    Icon(
+                                        imageVector = if (expandSortBy) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                AnimatedVisibility(visible = expandSortBy) {
+                                    Column(
+                                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        StoreSortOption.entries.forEach { opt ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        sortOption = opt
+                                                        currentPage = 1
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = sortOption == opt,
+                                                    onClick = {
+                                                        sortOption = opt
+                                                        currentPage = 1
+                                                    },
+                                                    colors = RadioButtonDefaults.colors(selectedColor = SkyBlueAccent),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(opt.label, fontSize = 11.sp, color = Color.White)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Category Checkbox Accordion Card (`00:25`–`00:26` in 429798.mp4)
+                        val categoryOptions = remember {
+                            listOf(
+                                "World Generation",
+                                "Technology",
+                                "Food & Cooking",
+                                "Game Mechanics",
+                                "Transportation",
+                                "Storage",
+                                "Magic",
+                                "Optimization",
+                                "Utility"
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = CardSlateBg,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { expandCategory = !expandCategory }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Category", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                        LavenderTagBadge(
+                                            text = if (selectedCategories.isEmpty()) "None Selected"
+                                            else "${selectedCategories.size} Selected"
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (expandCategory) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                AnimatedVisibility(visible = expandCategory) {
+                                    Column(
+                                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        categoryOptions.forEach { catName ->
+                                            val checked = catName in selectedCategories
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        selectedCategories = if (checked) selectedCategories - catName else selectedCategories + catName
+                                                        currentPage = 1
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Checkbox(
+                                                    checked = checked,
+                                                    onCheckedChange = {
+                                                        selectedCategories = if (checked) selectedCategories - catName else selectedCategories + catName
+                                                        currentPage = 1
+                                                    },
+                                                    colors = CheckboxDefaults.colors(
+                                                        checkedColor = SkyBlueAccent,
+                                                        checkmarkColor = SkyBlueDarkText
+                                                    ),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(catName, fontSize = 11.sp, color = Color.White)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mod Loader Radio Accordion Card (`00:27`–`00:28` in 429798.mp4)
+                        if (selectedCategory == StoreCategory.MOD || selectedCategory == StoreCategory.MODPACK) {
+                            val loaderOptions = remember {
+                                listOf("None Selected", "Horizon", "Fabric", "Forge", "NeoForge", "Quilt")
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = CardSlateBg,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { expandLoader = !expandLoader }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text("Mod Loader", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                            LavenderTagBadge(text = selectedLoader)
+                                        }
+                                        Icon(
+                                            imageVector = if (expandLoader) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    AnimatedVisibility(visible = expandLoader) {
+                                        Column(
+                                            modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            loaderOptions.forEach { ld ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable {
+                                                            selectedLoader = ld
+                                                            if (ld == "Horizon") targetPlatform = StoreTargetPlatform.HORIZON
+                                                            currentPage = 1
+                                                        }
+                                                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    RadioButton(
+                                                        selected = selectedLoader == ld,
+                                                        onClick = {
+                                                            selectedLoader = ld
+                                                            if (ld == "Horizon") targetPlatform = StoreTargetPlatform.HORIZON
+                                                            currentPage = 1
+                                                        },
+                                                        colors = RadioButtonDefaults.colors(selectedColor = SkyBlueAccent),
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(ld, fontSize = 11.sp, color = Color.White)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ============================================================
+                // MODE 2: PROJECT VERSION ACCORDION & RIGHT SUMMARY CARD
+                // (Matching 429798.mp4 00:10–00:16 & 00:33–00:39)
+                // ============================================================
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Center Panel: Top Filter Bar + Expandable MC Version Accordions
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = SubRailCapsuleActive,
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(20.dp),
+                        color = CardSlateBg,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
                     ) {
                         Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Top Bar: Back to List + `[✓] Show Only MC Releases` + `Search MC Versions`
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = CardRowBg,
+                                    modifier = Modifier.animatedPressScale { selectedProject = null }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = SkyBlueAccent, modifier = Modifier.size(15.dp))
+                                        Text("List", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (showOnlyMcReleases) SubRailCapsuleActive else CardRowBg,
+                                    modifier = Modifier.animatedPressScale { showOnlyMcReleases = !showOnlyMcReleases }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (showOnlyMcReleases) Icons.Default.Check else Icons.Default.FilterList,
+                                            contentDescription = null,
+                                            tint = SkyBlueAccent,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Show Only MC Releases",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = CardRowBg,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(32.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (searchMcVersionsQuery.isEmpty()) {
+                                            Text("Search MC Versions", fontSize = 11.sp, color = MutedSubtitleText)
+                                        }
+                                        BasicTextField(
+                                            value = searchMcVersionsQuery,
+                                            onValueChange = { searchMcVersionsQuery = it },
+                                            singleLine = true,
+                                            textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
+                                            cursorBrush = SolidColor(SkyBlueAccent),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isLoadingVersions) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    LinearProgressIndicator(
+                                        color = SkyBlueAccent,
+                                        trackColor = CardRowBg,
+                                        modifier = Modifier
+                                            .width(180.dp)
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(50))
+                                    )
+                                }
+                            } else {
+                                // Group versions by Minecraft version (`26.3`, `26.2`, `26.1.2`, `1.21.11`, etc.)
+                                val groupedByMcVer = remember(projectVersions, showOnlyMcReleases, searchMcVersionsQuery) {
+                                    val map = linkedMapOf<String, MutableList<StoreVersionRelease>>()
+                                    projectVersions.forEach { rel ->
+                                        rel.mcVersions.forEach { mcV ->
+                                            val isRelease = !mcV.contains("w") && !mcV.contains("pre") && !mcV.contains("rc")
+                                            val matchesToggle = !showOnlyMcReleases || isRelease
+                                            val matchesSearch = searchMcVersionsQuery.isBlank() || mcV.contains(searchMcVersionsQuery, ignoreCase = true)
+                                            if (matchesToggle && matchesSearch) {
+                                                map.getOrPut(mcV) { mutableListOf() }.add(rel)
+                                            }
+                                        }
+                                    }
+                                    map
+                                }
+
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    groupedByMcVer.entries.forEach { (mcVer, releases) ->
+                                        item(key = "mcgroup_$mcVer") {
+                                            val isExpanded = mcVer in expandedMcVerGroups
+                                            val isRecommended = mcVer.startsWith("26.")
+                                            val primaryLoader = releases.firstOrNull()?.loaders?.firstOrNull()
+                                            Surface(
+                                                shape = RoundedCornerShape(14.dp),
+                                                color = CardRowBg,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.fillMaxWidth()) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                expandedMcVerGroups = if (isExpanded) expandedMcVerGroups - mcVer
+                                                                else expandedMcVerGroups + mcVer
+                                                            }
+                                                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = mcVer,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White
+                                                            )
+                                                            if (!primaryLoader.isNullOrBlank()) {
+                                                                LavenderTagBadge(text = primaryLoader)
+                                                            }
+                                                        }
+
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            if (isRecommended) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Star,
+                                                                    contentDescription = "Recommended",
+                                                                    tint = Color.White,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                                Icon(
+                                                                    imageVector = Icons.Default.CheckCircle,
+                                                                    contentDescription = "Compatible",
+                                                                    tint = LavenderBadgeBg,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                            }
+                                                            Icon(
+                                                                imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                                                contentDescription = null,
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    AnimatedVisibility(visible = isExpanded) {
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                        ) {
+                                                            releases.forEach { rel ->
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(12.dp),
+                                                                    color = Color(0xFF21272B),
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .animatedPressScale {
+                                                                            val dlItem = detailProj.copy(
+                                                                                version = rel.versionNumber,
+                                                                                supportedMcVersions = listOf(mcVer),
+                                                                                downloadUrl = rel.downloadUrl,
+                                                                                fileName = rel.fileName.ifBlank { detailProj.fileName },
+                                                                                sizeBytes = rel.sizeBytes
+                                                                            )
+                                                                            if (mcVer.contains("26.3") || mcVer.contains("26.2")) {
+                                                                                startItemDownload(dlItem)
+                                                                            } else {
+                                                                                pendingIncompatibleItem = dlItem
+                                                                            }
+                                                                        }
+                                                                ) {
+                                                                    Row(
+                                                                        modifier = Modifier
+                                                                            .fillMaxWidth()
+                                                                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                                                                        verticalAlignment = Alignment.CenterVertically,
+                                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                                    ) {
+                                                                        Row(
+                                                                            verticalAlignment = Alignment.CenterVertically,
+                                                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                                            modifier = Modifier.weight(1f)
+                                                                        ) {
+                                                                            // Green circular 'R' badge (`00:11` & `00:34` in 429798.mp4)
+                                                                            Box(
+                                                                                contentAlignment = Alignment.Center,
+                                                                                modifier = Modifier
+                                                                                    .size(28.dp)
+                                                                                    .clip(CircleShape)
+                                                                                    .background(Color(0xFF1E4628))
+                                                                            ) {
+                                                                                Text(
+                                                                                    text = rel.releaseType.take(1).uppercase(),
+                                                                                    fontSize = 12.sp,
+                                                                                    fontWeight = FontWeight.ExtraBold,
+                                                                                    color = Color(0xFF4CAF50)
+                                                                                )
+                                                                            }
+
+                                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                                Text(
+                                                                                    text = rel.name,
+                                                                                    fontSize = 12.sp,
+                                                                                    fontWeight = FontWeight.Bold,
+                                                                                    color = Color.White,
+                                                                                    maxLines = 1,
+                                                                                    overflow = TextOverflow.Ellipsis
+                                                                                )
+                                                                                Text(
+                                                                                    text = "↗ ${rel.formattedDownloads}   •   📅 ${rel.datePublished}   •   📦 ${rel.releaseType.replaceFirstChar { it.uppercase() }}",
+                                                                                    fontSize = 10.sp,
+                                                                                    color = MutedSubtitleText,
+                                                                                    maxLines = 1
+                                                                                )
+                                                                            }
+                                                                        }
+
+                                                                        Icon(
+                                                                            imageVector = Icons.Default.Download,
+                                                                            contentDescription = "Download Version",
+                                                                            tint = SkyBlueAccent,
+                                                                            modifier = Modifier.size(18.dp)
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Right Project Summary Card (`00:10`–`00:16` & `00:33`–`00:39` in 429798.mp4)
+                    val isFav = detailProj.id in favoriteIds
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = CardSlateBg,
+                        modifier = Modifier
+                            .width(224.dp)
+                            .fillMaxHeight()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(14.dp)
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Downloading ${storeProgress.activeTitle} (${storeProgress.percent}%)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = "${storeProgress.speedText} • ${storeProgress.statusText}",
-                                        fontSize = 10.sp,
-                                        color = MutedSubtitleText,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = SkyBlueAccent,
-                                        modifier = Modifier.animatedPressScale {
-                                            val nextPaused = !HorizonNativeBridge.storeDownloadPaused.get()
-                                            HorizonNativeBridge.storeDownloadPaused.set(nextPaused)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = if (storeProgress.paused) "Resume" else "Pause",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = SkyBlueDarkText,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
+                                LavenderTagBadge(text = detailProj.category.label)
+
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = CardRowBg,
+                                    modifier = Modifier.animatedPressScale {
+                                        favoriteIds = HorizonNativeBridge.toggleProjectFavorite(context, detailProj.id)
                                     }
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFF3A2326),
-                                        modifier = Modifier.animatedPressScale { showCancelStoreDialog = true }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Text(
-                                            text = "Cancel",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFFFF8A80),
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        Icon(
+                                            imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                            contentDescription = "Favorite",
+                                            tint = if (isFav) Color(0xFFFF6E6E) else Color.White,
+                                            modifier = Modifier.size(13.dp)
                                         )
+                                        Text("Favorite", fontSize = 10.sp, color = Color.White)
                                     }
                                 }
                             }
-                            LinearProgressIndicator(
-                                progress = { (storeProgress.percent / 100f).coerceIn(0f, 1f) },
-                                color = SkyBlueAccent,
-                                trackColor = Color(0xFF263238),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(5.dp)
-                                    .clip(RoundedCornerShape(50))
+
+                            Spacer(Modifier.height(2.dp))
+
+                            StoreAsyncProjectIcon(
+                                iconUrl = detailProj.iconUrl,
+                                title = detailProj.title,
+                                isMod = detailProj.category == StoreCategory.MOD || detailProj.category == StoreCategory.MODPACK,
+                                isWorld = detailProj.category == StoreCategory.SAVES,
+                                size = 66.dp
                             )
-                        }
-                    }
-                }
 
-                if (isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = SkyBlueAccent, modifier = Modifier.size(28.dp))
-                    }
-                } else if (catalogItems.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No items found.", fontSize = 12.sp, color = MutedSubtitleText)
-                    }
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(catalogItems, key = { it.id }) { item ->
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = CardRowBg,
-                                modifier = Modifier.fillMaxWidth()
+                            Text(
+                                text = detailProj.title,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Text(
+                                text = detailProj.summary,
+                                fontSize = 11.sp,
+                                color = Color(0xFFD0D8DE),
+                                lineHeight = 15.sp
+                            )
+
+                            Spacer(Modifier.height(4.dp))
+
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    StoreOrFileItemIconBadge(
-                                        title = item.title,
-                                        isMod = item.category == StoreCategory.HORIZON_MODS,
-                                        isWorld = false
-                                    )
+                                Text(
+                                    text = "Related Links",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
 
-                                    Spacer(Modifier.width(12.dp))
-
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = item.title,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color.White,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            LavenderTagBadge(
-                                                text = if (item.category == StoreCategory.HORIZON_MODS) "Horizon" else "Modrinth"
-                                            )
-                                            LavenderTagBadge(text = item.versionBadge)
-                                        }
-                                        Text(
-                                            text = "${item.summary} (${item.fileName})",
-                                            fontSize = 11.sp,
-                                            color = MutedSubtitleText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-
-                                    Spacer(Modifier.width(10.dp))
-
+                                if (detailProj.pageUrl.isNotBlank()) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Info,
-                                            contentDescription = "Info",
-                                            tint = Color(0xFFD5DEE5),
-                                            modifier = Modifier
-                                                .size(20.dp)
-                                                .animatedPressScale { infoModalItem = item }
-                                        )
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = SkyBlueAccent,
-                                            modifier = Modifier.animatedPressScale(enabled = !storeProgress.running) {
-                                                if (item.isCompatibleWith26_3) {
-                                                    startItemDownload(item)
-                                                } else {
-                                                    pendingIncompatibleItem = item
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .animatedPressScale {
+                                                runCatching {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(detailProj.pageUrl)))
                                                 }
                                             }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Download,
-                                                    contentDescription = "Install",
-                                                    tint = SkyBlueDarkText,
-                                                    modifier = Modifier.size(15.dp)
-                                                )
-                                                Text(
-                                                    text = "Install",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SkyBlueDarkText
-                                                )
+                                            .padding(vertical = 3.dp)
+                                    ) {
+                                        Icon(Icons.Default.Language, contentDescription = null, tint = Color(0xFFD5DEE5), modifier = Modifier.size(16.dp))
+                                        Text("Project Page", fontSize = 11.sp, color = Color(0xFFD5DEE5))
+                                    }
+                                }
+
+                                if (detailProj.sourceCodeUrl.isNotBlank()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .animatedPressScale {
+                                                runCatching {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(detailProj.sourceCodeUrl)))
+                                                }
                                             }
-                                        }
+                                            .padding(vertical = 3.dp)
+                                    ) {
+                                        Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFFD5DEE5), modifier = Modifier.size(16.dp))
+                                        Text("View Source Code", fontSize = 11.sp, color = Color(0xFFD5DEE5))
                                     }
                                 }
                             }
@@ -3293,10 +4157,127 @@ private fun CleanStoreViewport(
 }
 
 @Composable
+private fun StoreRightSearchPill(
+    value: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = Color(0xFF1A2024),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .border(1.dp, Color(0xFF455159), RoundedCornerShape(50))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (value.isEmpty()) {
+                    Text(placeholder, fontSize = 12.sp, color = MutedSubtitleText)
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
+                    cursorBrush = SolidColor(SkyBlueAccent),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = placeholder,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StorePlatformBadge(platform: StoreTargetPlatform) {
+    val bgColor = when (platform) {
+        StoreTargetPlatform.MODRINTH -> Color(0xFF1BD96A)
+        StoreTargetPlatform.HORIZON -> SkyBlueAccent
+        StoreTargetPlatform.ALL -> LavenderBadgeBg
+    }
+    val txtColor = Color(0xFF0A2012)
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = bgColor
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = if (platform == StoreTargetPlatform.HORIZON) Icons.Default.Bolt else Icons.Default.Explore,
+                contentDescription = null,
+                tint = txtColor,
+                modifier = Modifier.size(11.dp)
+            )
+            Text(
+                text = platform.label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = txtColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun StoreAsyncProjectIcon(
+    iconUrl: String,
+    title: String,
+    isMod: Boolean,
+    isWorld: Boolean,
+    size: Dp = 44.dp
+) {
+    var loadedBmp by remember(iconUrl) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(iconUrl) {
+        if (iconUrl.isNotBlank()) {
+            loadedBmp = withContext(Dispatchers.IO) {
+                HorizonNativeBridge.loadProjectIconBitmap(iconUrl)
+            }
+        }
+    }
+    if (loadedBmp != null) {
+        Image(
+            bitmap = loadedBmp!!.asImageBitmap(),
+            contentDescription = title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+        )
+    } else {
+        StoreOrFileItemIconBadge(
+            title = title,
+            isMod = isMod,
+            isWorld = isWorld,
+            size = size
+        )
+    }
+}
+
+@Composable
 private fun StoreOrFileItemIconBadge(
     title: String,
     isMod: Boolean,
-    isWorld: Boolean
+    isWorld: Boolean,
+    size: Dp = 44.dp
 ) {
     val bgBrush = when {
         isWorld -> Brush.linearGradient(listOf(Color(0xFF43A047), Color(0xFF5D4037)))
@@ -3306,13 +4287,13 @@ private fun StoreOrFileItemIconBadge(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(44.dp)
+            .size(size)
             .clip(RoundedCornerShape(10.dp))
             .background(bgBrush)
             .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
     ) {
         if (isWorld) {
-            MinecraftGrassCubeIcon(size = 34.dp)
+            MinecraftGrassCubeIcon(size = size * 0.76f)
         } else {
             val initials = title.trim().take(2).uppercase()
             Text(
@@ -3325,11 +4306,27 @@ private fun StoreOrFileItemIconBadge(
     }
 }
 
+enum class FilesSortMode(val label: String) {
+    BY_NAME("Sort by Name"),
+    BY_FILE_NAME("Sort by File Name"),
+    BY_LAST_MODIFIED("Sort by Last Played")
+}
+
+/**
+ * Manage Versions / Files Viewport matching 429799.mp4 100%:
+ * - Left Sub-Navigation Rail: `Mods`, `Saves`, `Resource Packs`, `Shader Packs`, `Screenshots`
+ * - Top Action Toolbar: Filter (`▽` on Mods), Sort (`≡↓` with floating popup menu `Sort by Name` / `Sort by File Name`),
+ *   Pill Search Bar, `[ ] Available` checkbox, `+ Import`, `↓ Download` (switches to Store tab), `↻` Refresh.
+ * - Floating `Save Info` Popover (`00:12` in 429799.mp4) with copyable `World Seed`.
+ * - Floating `Resource Pack Information` Popover (`00:19` in 429799.mp4) with `Format Version` from `pack.mcmeta`.
+ * - Floating `•••` More Options Menu (`Quick Play`, `Rename`, `Backup Save`, `Delete` on Saves; `Rename`, `Delete` on Packs).
+ */
 @Composable
 private fun CleanFilesViewport(
     profileSlot: Int,
     logEnabled: Boolean,
-    onNavigateToStore: () -> Unit
+    onNavigateToStoreCategory: (StoreCategory) -> Unit,
+    onQuickPlayWorld: () -> Unit
 ) {
     val context = LocalContext.current
     val home = remember(profileSlot) {
@@ -3338,14 +4335,20 @@ private fun CleanFilesViewport(
     var currentFolder by remember { mutableStateOf("mods") }
     var searchQuery by remember { mutableStateOf("") }
     var filterEnabledOnly by remember { mutableStateOf(false) }
+    var sortMode by remember { mutableStateOf(FilesSortMode.BY_NAME) }
+    var showSortDropdown by remember { mutableStateOf(false) }
     var refreshCount by remember { mutableIntStateOf(0) }
-    var selectedInfoFile by remember { mutableStateOf<File?>(null) }
+
+    // For Rename Dialog
+    var renameTargetFile by remember { mutableStateOf<File?>(null) }
+    var renameInputText by remember { mutableStateOf("") }
 
     val categories = listOf(
         Triple("mods", "Mods", Icons.Default.Extension),
         Triple("saves", "Saves", Icons.Default.Public),
         Triple("resourcepacks", "Resource Packs", Icons.Default.Brush),
-        Triple("shaderpacks", "Shader Packs", Icons.Default.Lightbulb)
+        Triple("shaderpacks", "Shader Packs", Icons.Default.Lightbulb),
+        Triple("screenshots", "Screenshots", Icons.Default.Image)
     )
 
     val dirFile = File(home, currentFolder).apply { mkdirs() }
@@ -3353,18 +4356,27 @@ private fun CleanFilesViewport(
         dirFile.listFiles()?.toList().orEmpty()
     }
 
-    val filteredList = remember(rawList, searchQuery, filterEnabledOnly, currentFolder, refreshCount) {
-        rawList.filter { file ->
+    val filteredList = remember(rawList, searchQuery, filterEnabledOnly, currentFolder, sortMode, refreshCount) {
+        val base = rawList.filter { file ->
             val matchesQuery = searchQuery.isBlank() || file.name.contains(searchQuery, ignoreCase = true)
-            val matchesEnabled = if (!filterEnabledOnly || currentFolder == "saves") true
+            val matchesEnabled = if (!filterEnabledOnly || currentFolder in listOf("saves", "screenshots")) true
             else HorizonNativeBridge.isContentItemEnabled(context, currentFolder, file.name, profileSlot)
             matchesQuery && matchesEnabled
+        }
+        when (sortMode) {
+            FilesSortMode.BY_NAME -> base.sortedBy { it.nameWithoutExtension.lowercase(Locale.US) }
+            FilesSortMode.BY_FILE_NAME -> base.sortedBy { it.name.lowercase(Locale.US) }
+            FilesSortMode.BY_LAST_MODIFIED -> base.sortedByDescending { it.lastModified() }
         }
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            val ext = if (currentFolder == "mods") ".hmod" else ".zip"
+            val ext = when (currentFolder) {
+                "mods" -> ".hmod"
+                "screenshots" -> ".png"
+                else -> ".zip"
+            }
             HorizonNativeBridge.importUriToDestination(
                 context,
                 uri,
@@ -3376,21 +4388,37 @@ private fun CleanFilesViewport(
         }
     }
 
-    selectedInfoFile?.let { file ->
-        val dateStr = SimpleDateFormat("MMM dd, yyyy, h:mm:ss a", Locale.US).format(Date(file.lastModified()))
+    // Rename Modal Dialog
+    renameTargetFile?.let { target ->
         AlertDialog(
-            onDismissRequest = { selectedInfoFile = null },
-            title = { Text(file.name, style = MaterialTheme.typography.titleMedium) },
+            onDismissRequest = { renameTargetFile = null },
+            title = { Text("Rename ${target.name}", style = MaterialTheme.typography.titleMedium) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Category: $currentFolder", fontSize = 12.sp)
-                    Text("Size: ${file.length() / 1024} KB (${file.length()} bytes)", fontSize = 12.sp)
-                    Text("Last Modified: $dateStr", fontSize = 12.sp)
-                    Text("Path: ${file.absolutePath}", fontSize = 11.sp, color = MutedSubtitleText)
-                }
+                OutlinedTextField(
+                    value = renameInputText,
+                    onValueChange = { renameInputText = it },
+                    label = { Text("New Name", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             },
             confirmButton = {
-                TextButton(onClick = { selectedInfoFile = null }) { Text("Close") }
+                Button(
+                    onClick = {
+                        if (HorizonNativeBridge.renameContentFile(context, target, renameInputText, logEnabled)) {
+                            refreshCount += 1
+                        }
+                        renameTargetFile = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlueAccent)
+                ) {
+                    Text("Save", color = SkyBlueDarkText, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTargetFile = null }) {
+                    Text("Cancel", fontSize = 12.sp)
+                }
             }
         )
     }
@@ -3399,6 +4427,7 @@ private fun CleanFilesViewport(
         modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Left Sub-Navigation Rail (`Mods`, `Saves`, `Resource Packs`, `Shader Packs`, `Screenshots` — matching 429799.mp4)
         ZalithSubCategoryRail(
             items = categories,
             selectedItem = categories.first { it.first == currentFolder },
@@ -3407,6 +4436,7 @@ private fun CleanFilesViewport(
             onSelect = { currentFolder = it.first }
         )
 
+        // Right Main Rounded Slate Container (`429799.mp4` style)
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = CardSlateBg,
@@ -3420,34 +4450,65 @@ private fun CleanFilesViewport(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Top Action Toolbar (`Filter  Sort  [ Search... ]  [ ] Available  + Import  ↓ Download  ↻`)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.FilterAlt,
-                        contentDescription = "Filter",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(19.dp)
-                            .animatedPressScale { filterEnabledOnly = !filterEnabledOnly }
-                    )
-                    Icon(
-                        imageVector = Icons.Default.Sort,
-                        contentDescription = "Sort",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(19.dp)
-                            .animatedPressScale { refreshCount += 1 }
-                    )
+                    if (currentFolder == "mods") {
+                        Icon(
+                            imageVector = Icons.Default.FilterAlt,
+                            contentDescription = "Filter",
+                            tint = if (filterEnabledOnly) SkyBlueAccent else Color.White,
+                            modifier = Modifier
+                                .size(19.dp)
+                                .animatedPressScale { filterEnabledOnly = !filterEnabledOnly }
+                        )
+                    }
 
+                    // Sort Icon with Floating Dropdown (`Sort by Name` / `Sort by File Name` — matching 00:16 of 429799.mp4)
+                    Box {
+                        Icon(
+                            imageVector = Icons.Default.Sort,
+                            contentDescription = "Sort",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(19.dp)
+                                .animatedPressScale { showSortDropdown = true }
+                        )
+                        DropdownMenu(
+                            expanded = showSortDropdown,
+                            onDismissRequest = { showSortDropdown = false },
+                            modifier = Modifier.background(Color(0xFF283036))
+                        ) {
+                            FilesSortMode.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = mode.label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (sortMode == mode) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (sortMode == mode) SkyBlueAccent else Color.White
+                                        )
+                                    },
+                                    onClick = {
+                                        sortMode = mode
+                                        showSortDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Pill Search Input
                     Surface(
                         shape = RoundedCornerShape(50),
                         color = CardRowBg,
                         modifier = Modifier
                             .weight(1f)
                             .height(34.dp)
+                            .border(1.dp, Color(0xFF3E4A52), RoundedCornerShape(50))
                     ) {
                         Box(
                             modifier = Modifier
@@ -3469,24 +4530,28 @@ private fun CleanFilesViewport(
                         }
                     }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.animatedPressScale { filterEnabledOnly = !filterEnabledOnly }
-                    ) {
-                        Checkbox(
-                            checked = filterEnabledOnly,
-                            onCheckedChange = { filterEnabledOnly = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = SkyBlueAccent,
-                                checkmarkColor = SkyBlueDarkText,
-                                uncheckedColor = MutedSubtitleText
-                            ),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Available", fontSize = 11.sp, color = Color.White)
+                    // `[ ] Available` checkbox shown on Saves & Resource Packs (matching 00:00, 00:11, 00:18 in 429799.mp4)
+                    if (currentFolder in listOf("saves", "resourcepacks")) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.animatedPressScale { filterEnabledOnly = !filterEnabledOnly }
+                        ) {
+                            Checkbox(
+                                checked = filterEnabledOnly,
+                                onCheckedChange = { filterEnabledOnly = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = SkyBlueAccent,
+                                    checkmarkColor = SkyBlueDarkText,
+                                    uncheckedColor = MutedSubtitleText
+                                ),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Available", fontSize = 11.sp, color = Color.White)
+                        }
                     }
 
+                    // `+ Import` action button
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -3498,17 +4563,28 @@ private fun CleanFilesViewport(
                         Text("Import", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
                     }
 
+                    // `↓ Download` action button (switches directly to Store tab with matching category!)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .padding(horizontal = 4.dp)
-                            .animatedPressScale(onClick = onNavigateToStore)
+                            .animatedPressScale {
+                                val targetCat = when (currentFolder) {
+                                    "mods" -> StoreCategory.MOD
+                                    "saves" -> StoreCategory.SAVES
+                                    "resourcepacks" -> StoreCategory.RESOURCE_PACK
+                                    "shaderpacks" -> StoreCategory.SHADER_PACK
+                                    else -> StoreCategory.MOD
+                                }
+                                onNavigateToStoreCategory(targetCat)
+                            }
                     ) {
                         Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(3.dp))
                         Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
                     }
 
+                    // `↻` Refresh icon button
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Refresh",
@@ -3519,6 +4595,7 @@ private fun CleanFilesViewport(
                     )
                 }
 
+                // Animated List Content
                 AnimatedContent(
                     targetState = currentFolder,
                     transitionSpec = {
@@ -3530,144 +4607,402 @@ private fun CleanFilesViewport(
                     label = "FilesFolderTransition"
                 ) { folder ->
                     if (filteredList.isEmpty()) {
+                        // Centered dark pill empty state (`00:25` in 429799.mp4: "No shader packs for this version")
+                        val emptyLabel = when (folder) {
+                            "mods" -> "No mods for this version"
+                            "saves" -> "No saves for this version"
+                            "resourcepacks" -> "No resource packs for this version"
+                            "shaderpacks" -> "No shader packs for this version"
+                            "screenshots" -> "No screenshots for this version"
+                            else -> "No items for this version"
+                        }
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "No items in $folder yet — tap '+ Import' or '↓ Download' to add content.",
-                                fontSize = 12.sp,
-                                color = MutedSubtitleText
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = CardRowBg
+                            ) {
+                                Text(
+                                    text = emptyLabel,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFD5DEE5),
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                                )
+                            }
                         }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(filteredList, key = { it.absolutePath }) { file ->
-                                val isToggleable = folder in listOf("mods", "shaderpacks", "resourcepacks")
-                                val isEnabled = remember(file.name, refreshCount, folder) {
-                                    if (isToggleable) {
-                                        HorizonNativeBridge.isContentItemEnabled(context, folder, file.name, profileSlot)
-                                    } else true
-                                }
-                                val displayTitle = file.nameWithoutExtension
-                                    .replace("-", " ")
-                                    .replace("_", " ")
-                                val formattedDate = remember(file.lastModified()) {
-                                    SimpleDateFormat("MMM dd, yyyy, h:mm:ss a", Locale.US).format(Date(file.lastModified()))
-                                }
+                                FileManagerRowCard(
+                                    file = file,
+                                    folder = folder,
+                                    profileSlot = profileSlot,
+                                    logEnabled = logEnabled,
+                                    refreshCount = refreshCount,
+                                    onTriggerRefresh = { refreshCount += 1 },
+                                    onRequestRename = { target ->
+                                        renameInputText = target.nameWithoutExtension
+                                        renameTargetFile = target
+                                    },
+                                    onQuickPlayWorld = onQuickPlayWorld
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = CardRowBg,
-                                    modifier = Modifier.fillMaxWidth()
+@Composable
+private fun FileManagerRowCard(
+    file: File,
+    folder: String,
+    profileSlot: Int,
+    logEnabled: Boolean,
+    refreshCount: Int,
+    onTriggerRefresh: () -> Unit,
+    onRequestRename: (File) -> Unit,
+    onQuickPlayWorld: () -> Unit
+) {
+    val context = LocalContext.current
+    var showInfoPopover by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+
+    val isToggleable = folder in listOf("mods", "shaderpacks", "resourcepacks")
+    val isEnabled = remember(file.name, refreshCount, folder) {
+        if (isToggleable) {
+            HorizonNativeBridge.isContentItemEnabled(context, folder, file.name, profileSlot)
+        } else true
+    }
+
+    var localIconBmp by remember(file.absolutePath, file.lastModified()) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(file.absolutePath, file.lastModified()) {
+        localIconBmp = withContext(Dispatchers.IO) {
+            HorizonNativeBridge.loadLocalContentIconBitmap(file)
+        }
+    }
+
+    val saveDetail = remember(file.absolutePath, file.lastModified(), folder) {
+        if (folder == "saves") HorizonNativeBridge.inspectWorldSave(file) else null
+    }
+    val packDetail = remember(file.absolutePath, file.lastModified(), folder) {
+        if (folder in listOf("resourcepacks", "shaderpacks")) HorizonNativeBridge.inspectResourcePack(file) else null
+    }
+
+    val displayTitle = when {
+        saveDetail != null -> saveDetail.displayName
+        packDetail != null -> packDetail.title
+        else -> file.nameWithoutExtension.replace("-", " ").replace("_", " ")
+    }
+
+    val subtitleText = when {
+        saveDetail != null -> "Last played: ${saveDetail.lastPlayedFormatted}"
+        packDetail != null -> packDetail.description
+        else -> "File Name: ${file.name}"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = CardRowBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left 44dp Icon (from pack.png / icon.png or badge)
+            if (localIconBmp != null) {
+                Image(
+                    bitmap = localIconBmp!!.asImageBitmap(),
+                    contentDescription = displayTitle,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                )
+            } else {
+                StoreOrFileItemIconBadge(
+                    title = displayTitle,
+                    isMod = folder == "mods",
+                    isWorld = folder == "saves",
+                    size = 44.dp
+                )
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            // Middle Title + Lavender Badges + Subtitle (matching 429799.mp4)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = displayTitle,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    when (folder) {
+                        "mods" -> {
+                            if (file.name.endsWith(".hmod", true)) {
+                                LavenderTagBadge(text = "Horizon")
+                                LavenderTagBadge(text = "26.3")
+                            } else {
+                                LavenderTagBadge(text = "Fabric")
+                                if (file.name.contains("quilt", true) || file.name.contains("config", true)) {
+                                    LavenderTagBadge(text = "Quilt")
+                                }
+                            }
+                        }
+                        "saves" -> {
+                            LavenderTagBadge(text = "26.3")
+                            LavenderTagBadge(text = saveDetail?.gameMode ?: "Survival Mode")
+                        }
+                    }
+                }
+                Text(
+                    text = subtitleText,
+                    fontSize = 11.sp,
+                    color = MutedSubtitleText,
+                    maxLines = 2,
+                    lineHeight = 14.sp,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            // Right Action Icons (matching 429799.mp4: Mods has `↻ ☑ ⓘ 🗑`; Saves/ResourcePacks/Shaders have `ⓘ •••`)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (folder == "mods") {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Reload",
+                        tint = Color(0xFFD5DEE5),
+                        modifier = Modifier
+                            .size(19.dp)
+                            .animatedPressScale(onClick = onTriggerRefresh)
+                    )
+
+                    Checkbox(
+                        checked = isEnabled,
+                        onCheckedChange = {
+                            HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
+                            onTriggerRefresh()
+                        },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = SkyBlueAccent,
+                            checkmarkColor = SkyBlueDarkText,
+                            uncheckedColor = MutedSubtitleText
+                        ),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // `ⓘ` Info Icon with Floating Popover Card (`00:12` Save Info & `00:19` Resource Pack Information in 429799.mp4!)
+                Box {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = "Info",
+                        tint = Color(0xFFD5DEE5),
+                        modifier = Modifier
+                            .size(20.dp)
+                            .animatedPressScale { showInfoPopover = true }
+                    )
+
+                    DropdownMenu(
+                        expanded = showInfoPopover,
+                        onDismissRequest = { showInfoPopover = false },
+                        modifier = Modifier
+                            .widthIn(min = 250.dp, max = 320.dp)
+                            .background(Color(0xFF283036))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            if (saveDetail != null) {
+                                // Exact `Save Info` Popover from 00:12 of 429799.mp4!
+                                Text(
+                                    text = "Save Info",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text("File Name: ${saveDetail.folderName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("Game Mode: ${saveDetail.gameMode}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("Difficulty: ${saveDetail.difficulty}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("Play Time: ${saveDetail.playTimeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        StoreOrFileItemIconBadge(
-                                            title = displayTitle,
-                                            isMod = folder == "mods",
-                                            isWorld = folder == "saves"
-                                        )
-
-                                        Spacer(Modifier.width(12.dp))
-
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = displayTitle,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = Color.White,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                when (folder) {
-                                                    "mods" -> {
-                                                        LavenderTagBadge(text = "Horizon")
-                                                        LavenderTagBadge(text = "26.3")
-                                                    }
-                                                    "saves" -> {
-                                                        LavenderTagBadge(text = "26.3")
-                                                        LavenderTagBadge(text = "Survival Mode")
-                                                    }
-                                                    "resourcepacks" -> {
-                                                        LavenderTagBadge(text = "26.3")
-                                                    }
-                                                    "shaderpacks" -> {
-                                                        LavenderTagBadge(text = "Shader")
-                                                    }
-                                                }
+                                    Text(
+                                        text = "World Seed: ${saveDetail.worldSeed}",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFFE0E6EB),
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Seed",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .size(15.dp)
+                                            .animatedPressScale {
+                                                HorizonNativeBridge.copyToClipboard(context, "World Seed", saveDetail.worldSeed)
                                             }
-                                            Text(
-                                                text = if (folder == "saves") "Last played: $formattedDate"
-                                                else "File Name: ${file.name}",
-                                                fontSize = 11.sp,
-                                                color = MutedSubtitleText,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-
-                                        Spacer(Modifier.width(10.dp))
-
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Refresh,
-                                                contentDescription = "Reload",
-                                                tint = Color(0xFFD5DEE5),
-                                                modifier = Modifier
-                                                    .size(19.dp)
-                                                    .animatedPressScale { refreshCount += 1 }
-                                            )
-
-                                            if (isToggleable) {
-                                                Checkbox(
-                                                    checked = isEnabled,
-                                                    onCheckedChange = {
-                                                        HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
-                                                        refreshCount += 1
-                                                    },
-                                                    colors = CheckboxDefaults.colors(
-                                                        checkedColor = SkyBlueAccent,
-                                                        checkmarkColor = SkyBlueDarkText,
-                                                        uncheckedColor = MutedSubtitleText
-                                                    ),
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-
-                                            Icon(
-                                                imageVector = Icons.Outlined.Info,
-                                                contentDescription = "Info",
-                                                tint = Color(0xFFD5DEE5),
-                                                modifier = Modifier
-                                                    .size(20.dp)
-                                                    .animatedPressScale { selectedInfoFile = file }
-                                            )
-
-                                            Icon(
-                                                imageVector = Icons.Outlined.Delete,
-                                                contentDescription = "Delete",
-                                                tint = Color(0xFFD5DEE5),
-                                                modifier = Modifier
-                                                    .size(20.dp)
-                                                    .animatedPressScale {
-                                                        file.deleteRecursively()
-                                                        refreshCount += 1
-                                                    }
-                                            )
-                                        }
-                                    }
+                                    )
                                 }
+                            } else if (packDetail != null) {
+                                // Exact `Resource Pack Information` Popover from 00:19 of 429799.mp4!
+                                Text(
+                                    text = if (folder == "shaderpacks") "Shader Pack Information" else "Resource Pack Information",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text("Resource Pack Type: ${packDetail.packType}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("File Name: ${packDetail.fileName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("File Size: ${packDetail.fileSizeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text("Format Version: ${packDetail.formatVersion}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                            } else {
+                                Text(
+                                    text = "Mod Information",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text("File Name: ${file.name}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                Text(
+                                    text = "File Size: ${String.format(Locale.US, "%.2f KB", file.length() / 1024.0)}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFE0E6EB)
+                                )
+                                Text(
+                                    text = "Status: ${if (isEnabled) "Enabled" else "Disabled"}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFE0E6EB)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (folder == "mods") {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = "Delete",
+                        tint = Color(0xFFD5DEE5),
+                        modifier = Modifier
+                            .size(20.dp)
+                            .animatedPressScale {
+                                file.deleteRecursively()
+                                onTriggerRefresh()
+                            }
+                    )
+                } else {
+                    // `•••` More Options Button (`00:14` on Saves & `00:22` on Resource Packs in 429799.mp4!)
+                    Box {
+                        Icon(
+                            imageVector = Icons.Default.MoreHoriz,
+                            contentDescription = "More Options",
+                            tint = Color(0xFFD5DEE5),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .animatedPressScale { showMoreMenu = true }
+                        )
+
+                        DropdownMenu(
+                            expanded = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false },
+                            modifier = Modifier.background(Color(0xFF283036))
+                        ) {
+                            if (folder == "saves") {
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Quick Play", fontSize = 12.sp, color = Color.White) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onQuickPlayWorld()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onRequestRename(file)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Backup Save", fontSize = 12.sp, color = Color.White) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        HorizonNativeBridge.backupWorldSave(context, file, logEnabled)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        file.deleteRecursively()
+                                        onTriggerRefresh()
+                                    }
+                                )
+                            } else {
+                                if (isToggleable) {
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                if (isEnabled) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                                contentDescription = null,
+                                                tint = SkyBlueAccent,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        },
+                                        text = { Text(if (isEnabled) "Disable Pack" else "Enable Pack", fontSize = 12.sp, color = Color.White) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
+                                            onTriggerRefresh()
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onRequestRename(file)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
+                                    text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        file.deleteRecursively()
+                                        onTriggerRefresh()
+                                    }
+                                )
                             }
                         }
                     }

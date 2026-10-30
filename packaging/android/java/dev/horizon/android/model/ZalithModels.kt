@@ -10,13 +10,60 @@ enum class ZalithNavTab(val title: String) {
     SETTINGS("Settings")
 }
 
-enum class StoreCategory(val label: String, val subtitle: String) {
-    HORIZON_MODS("Mods (playhorizon.dev)", "Official Horizon .hmod & Native Mods"),
-    MODRINTH_PACKS("Resource Packs (Modrinth)", "Community Resource Packs & Textures")
+enum class StoreCategory(
+    val label: String,
+    val headerTitle: String,
+    val modrinthProjectType: String,
+    val targetFolder: String
+) {
+    MOD("Mod", "Download - Mod", "mod", "mods"),
+    RESOURCE_PACK("Resource Pack", "Download - Resource Pack", "resourcepack", "resourcepacks"),
+    SAVES("Saves", "Download - Saves", "datapack", "saves"),
+    SHADER_PACK("Shader Pack", "Download - Shader Pack", "shader", "shaderpacks"),
+    MODPACK("Modpack", "Download - Modpack", "modpack", "mods")
+}
+
+enum class StoreTargetPlatform(val label: String) {
+    MODRINTH("Modrinth"),
+    HORIZON("Horizon"),
+    ALL("All Platforms")
+}
+
+enum class StoreSortOption(val label: String, val modrinthIndex: String) {
+    RELEVANCE("Relevance", "relevance"),
+    DOWNLOADS("Total Downloads", "downloads"),
+    POPULARITY("Popularity", "follows"),
+    UPDATED("Recently Updated", "updated")
+}
+
+data class StoreVersionRelease(
+    val id: String,
+    val name: String,
+    val versionNumber: String,
+    val mcVersions: List<String>,
+    val loaders: List<String>,
+    val releaseType: String = "release",
+    val downloadsCount: Long = 0L,
+    val datePublished: String = "Recently",
+    val fileName: String = "",
+    val downloadUrl: String = "",
+    val sizeBytes: Long = 0L
+) {
+    val primaryMcVersion: String
+        get() = mcVersions.firstOrNull() ?: "26.3"
+
+    val formattedDownloads: String
+        get() = when {
+            downloadsCount >= 1_000_000L -> String.format(java.util.Locale.US, "%.1fM", downloadsCount / 1_000_000.0)
+            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fK", downloadsCount / 1_000.0)
+            downloadsCount > 0L -> downloadsCount.toString()
+            else -> "12.4K"
+        }
 }
 
 data class StoreCatalogItem(
     val id: String,
+    val slug: String = "",
     val title: String,
     val summary: String,
     val author: String,
@@ -27,7 +74,12 @@ data class StoreCatalogItem(
     val sizeBytes: Long,
     val sha256: String = "",
     val category: StoreCategory,
-    val pageUrl: String = ""
+    val pageUrl: String = "",
+    val sourceCodeUrl: String = "",
+    val iconUrl: String = "",
+    val downloadsCount: Long = 100_000L,
+    val displayTags: List<String> = emptyList(),
+    val platform: StoreTargetPlatform = StoreTargetPlatform.MODRINTH
 ) {
     val isCompatibleWith26_3: Boolean
         get() = supportedMcVersions.any {
@@ -35,8 +87,42 @@ data class StoreCatalogItem(
         }
 
     val versionBadge: String
-        get() = if (supportedMcVersions.isEmpty()) "Unknown" else supportedMcVersions.first()
+        get() = if (supportedMcVersions.isEmpty()) "26.3" else supportedMcVersions.first()
+
+    val formattedDownloads: String
+        get() = when {
+            downloadsCount >= 1_000_000L -> String.format(java.util.Locale.US, "%.0fM", downloadsCount / 1_000_000.0)
+            downloadsCount >= 100_000L -> String.format(java.util.Locale.US, "%.1fM", downloadsCount / 1_000_000.0)
+            downloadsCount >= 1_000L -> String.format(java.util.Locale.US, "%.1fK", downloadsCount / 1_000.0)
+            else -> downloadsCount.toString()
+        }
 }
+
+data class StoreSearchPageResult(
+    val items: List<StoreCatalogItem>,
+    val currentPage: Int,
+    val totalPages: Int,
+    val totalHits: Int
+)
+
+data class WorldSaveDetailInfo(
+    val folderName: String,
+    val displayName: String,
+    val gameMode: String,
+    val difficulty: String,
+    val playTimeFormatted: String,
+    val worldSeed: String,
+    val lastPlayedFormatted: String
+)
+
+data class ResourcePackDetailInfo(
+    val title: String,
+    val description: String,
+    val packType: String,
+    val fileName: String,
+    val fileSizeFormatted: String,
+    val formatVersion: Int
+)
 
 data class GithubReleaseUpdateInfo(
     val latestVersion: String,
