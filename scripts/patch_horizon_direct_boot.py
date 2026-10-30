@@ -2,20 +2,22 @@
 from pathlib import Path
 
 # 1. Patch crates/horizon-client/src/android/launcher.rs:
-#    - Disable `self.draw_pages()` (removes the built-in 'Horizon Android 0.7.4' UI completely)
-#    - Auto-trigger `self.action(events)` on `resumed()` and `RedrawRequested`
+#    - Disable `self.draw_pages()` at runtime (removes the built-in 'Horizon Android 0.7.4' UI completely)
+#      while keeping `if false { let _ = self.draw_pages(); }` and returning `Ok(())` so `match event`
+#      type-checks cleanly as `Result<()>` with zero dead-code warnings.
+#    - Auto-trigger `self.action(events)` on `resumed()` and `RedrawRequested`.
 #    - Make `restore_launcher` exit the `:game` process cleanly (`events.exit(); std::process::exit(0);`)
-#      when the player clicks Quit Game inside Minecraft so it returns to ZalithMainActivity instead of re-entering Minecraft!
+#      at the end of `restore_launcher` when the player clicks Quit Game inside Minecraft.
 launcher_rs = Path("crates/horizon-client/src/android/launcher.rs")
 if launcher_rs.exists():
     txt = launcher_rs.read_text(encoding="utf-8")
 
     # (a) Auto-trigger self.action(events) in resumed()
-    old_resumed = """        if let Err(error) = self.open(events) {
+    old_resumed = '''        if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
-        }"""
-    new_resumed = """        if let Err(error) = self.open(events) {
+        }'''
+    new_resumed = '''        if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
             return;
@@ -24,31 +26,34 @@ if launcher_rs.exists():
             if let Err(error) = self.action(events) {
                 self.fail(error);
             }
-        }"""
+        }'''
     if old_resumed in txt:
         txt = txt.replace(old_resumed, new_resumed, 1)
         print("[HorizonZ Patch] Patched Launcher::resumed for automatic direct boot!")
 
-    # (b) Remove built-in 'Horizon Android 0.7.4' page rendering (`self.draw_pages()`)
+    # (b) Bypass built-in 'Horizon Android 0.7.4' page rendering (`self.draw_pages()`) and return `Ok(())`
     old_redraw = "WindowEvent::RedrawRequested => self.draw_pages(),"
-    new_redraw = """WindowEvent::RedrawRequested => {
+    new_redraw = '''WindowEvent::RedrawRequested => {
+                if false {
+                    let _ = self.draw_pages();
+                }
                 if self.game.is_none() && self.worker.is_none() && self.session_worker.is_none() {
                     let _ = self.action(events);
                 }
                 Ok(())
-            }"""
+            }'''
     if old_redraw in txt:
         txt = txt.replace(old_redraw, new_redraw, 1)
-        print("[HorizonZ Patch] Removed self.draw_pages() ('Horizon Android 0.7.4' UI) from RedrawRequested!")
+        print("[HorizonZ Patch] Patched WindowEvent::RedrawRequested with Ok(()) and bypassed draw_pages()!")
 
     # (c) Auto-launch game when install worker finishes
-    old_worker = """        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
+    old_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
             if let Err(error) = result {
                 self.fail(error);
             }
-        }"""
-    new_worker = """        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
+        }'''
+    new_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
             match result {
                 Ok(()) => {
@@ -58,36 +63,28 @@ if launcher_rs.exists():
                 }
                 Err(error) => self.fail(error),
             }
-        }"""
+        }'''
     if old_worker in txt:
         txt = txt.replace(old_worker, new_worker, 1)
         print("[HorizonZ Patch] Patched Launcher::about_to_wait to auto-launch game::android_game()!")
 
-    # (d) Fix game exit (`restore_launcher`): when exiting Minecraft (`take_launcher_return()`),
-    #     close the `:game` process cleanly so Android returns to ZalithMainActivity instead of re-entering Minecraft!
-    old_restore = """    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
-        if !horizon_client::android_runtime::take_launcher_return() {
-            return;
+    # (d) Fix game exit (`restore_launcher`): replace `self.open(events)` at the end of `restore_launcher`
+    #     with `events.exit(); std::process::exit(0);` so quitting Minecraft closes the `:game` process cleanly!
+    old_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
+            self.error = Some(message);
         }
-        if let Some(mut game) = self.game.take() {
-            game.exiting(events);
-            drop(game);
-        }"""
-    new_restore = """    fn restore_launcher(&mut self, events: &ActiveEventLoop) {
-        if !horizon_client::android_runtime::take_launcher_return() {
-            return;
+        if let Err(error) = self.open(events) {
+            self.fail(error);
+            events.exit();
+        }'''
+    new_restore_tail = '''        if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
+            self.error = Some(message);
         }
-        if let Some(mut game) = self.game.take() {
-            game.exiting(events);
-            drop(game);
-        }
-        crate::performance::stop();
-        crate::platform::hide();
         events.exit();
-        std::process::exit(0);"""
-    if old_restore in txt:
-        txt = txt.replace(old_restore, new_restore, 1)
-        print("[HorizonZ Patch] Patched restore_launcher to exit cleanly back to ZalithMainActivity on game quit!")
+        std::process::exit(0);'''
+    if old_restore_tail in txt:
+        txt = txt.replace(old_restore_tail, new_restore_tail, 1)
+        print("[HorizonZ Patch] Patched restore_launcher tail to exit cleanly back to ZalithMainActivity!")
 
     launcher_rs.write_text(txt, encoding="utf-8")
 
@@ -103,12 +100,13 @@ if android_res_rs.exists():
         print("[HorizonZ Patch] Patched android_resources.rs with guaranteed control revision fallback!")
 
 # 3. Append JNI official_install + detailed Download Process Logger to crates/horizon-client/src/android_main.rs
+# Uses #[unsafe(no_mangle)] as required by Rust 2024 edition in crates/horizon-client!
 android_main_rs = Path("crates/horizon-client/src/android_main.rs")
 if android_main_rs.exists():
     main_txt = android_main_rs.read_text(encoding="utf-8")
     jni_bridge_code = r'''
 
-// === HorizonZ 1.5 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
+// === HorizonZ 1.6 JNI Bridge for Official 26.3 Asset Installer & Live Download Logger ===
 fn append_install_log(home: &std::path::Path, msg: &str) {
     use std::io::Write;
     let log_path = home.join("zalith-install-log.txt");
@@ -144,8 +142,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
     );
     let _ = std::fs::write(
         home_path.join("zalith-install-log.txt"),
-        "[Installer] Initializing Minecraft 26.3 official asset installer...
-",
+        "[Installer] Initializing Minecraft 26.3 official asset installer...\n",
     );
 
     std::thread::spawn(move || {
@@ -200,8 +197,7 @@ pub extern "system" fn Java_dev_horizon_android_bridge_HorizonNativeBridge_nativ
                 );
             }
             Err(err) => {
-                let clean_err = err.to_string().replace('"', "'").replace('
-', " ");
+                let clean_err = err.to_string().replace('"', "'").replace('\n', " ");
                 append_install_log(&home_path, &format!("[Error] Installation failed: {}", clean_err));
                 let json = format!(
                     r#"{{"ready":false,"running":false,"stage":"Error","done":0,"total":100,"error":"{}"}}"#,

@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.5 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.6 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -102,8 +102,30 @@ jobs:
             SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n 1)"
           fi
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
+
+          NDK_VERSION="28.2.13676358"
+          NDK_DIR="$ANDROID_HOME/ndk/$NDK_VERSION"
+          for attempt in 1 2 3; do
+            if [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION" && [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/temp"
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Unable to install Android NDK $NDK_VERSION after 3 attempts."
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
+
+          test -f "$NDK_DIR/source.properties"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
       - name: Set up Rust Toolchain (${{ matrix.rust_target }})
         uses: dtolnay/rust-toolchain@stable
@@ -127,7 +149,7 @@ jobs:
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v15-${{ matrix.rust_target }}
+          key: horizon-real-engine-v16-${{ matrix.rust_target }}
 
       - name: Compile Real Horizon Rust Engine (libhorizon_android.so) & Stage Assets (${{ matrix.abi }})
         run: |
@@ -158,7 +180,18 @@ jobs:
           export "AR_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/llvm-ar"
           export "CARGO_TARGET_${TRIPLE_UPPER}_LINKER=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
 
-          cargo build --release -p horizon-android --target ${{ matrix.rust_target }}
+          set +e
+          cargo build --release -p horizon-android --target ${{ matrix.rust_target }} 2>&1 | tee cargo_build.log
+          CARGO_EXIT=${PIPESTATUS[0]}
+          set -e
+          if [ "$CARGO_EXIT" -ne 0 ]; then
+            echo "### Rust Cargo Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 120 cargo_build.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit "$CARGO_EXIT"
+          fi
+
           cp -f "target/${{ matrix.rust_target }}/release/libhorizon_android.so" ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
           "$TOOLCHAIN_BIN/llvm-strip" --strip-unneeded ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" || true
           ls -lh ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
@@ -187,18 +220,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.5-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.6-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.5-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.5-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.6-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.6-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.5 Release APKs
+    name: Publish HorizonZ 1.6 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -218,13 +251,14 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.5 (Build #${{ github.run_number }} • Auto-Update Folder System + Material You UI)"
+          tag_name: v1.6.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.6 (Build #${{ github.run_number }} • Direct Game Boot + 12 HD Wallpapers + Persistent Accounts)"
           body: |
-            ## HorizonZ - Launcher v1.5
-            - **Auto-Extract `Update/` Folder System**: Upload any future `HorizonZ*.zip` into the `Update/` folder in the repository; GitHub Actions automatically extracts and overwrites the main repository source code, cleans up the `.zip`, commits to `main`, and builds the new Release APKs.
-            - **Fixed `Missing control revision` Error**: Preserves upstream `packaging/android/bedrock-controls.json` during compile time (`include_str!`) and adds fallback control revision handling in `android_resources.rs`.
-            - **Live System, Download & Minecraft Runtime Logs**: Expandable/minimizable Download Process Log directly below the progress indicator + full System & Game Log viewer with **Copy** button and **System Logs** toggle in Settings.
+            ## HorizonZ - Launcher v1.6
+            - **Fixed Rust & Kotlin Build Errors (Exit Code 101)**: Fixed multiline string/char literal escapes in `scripts/patch_horizon_direct_boot.py`, `HorizonNativeBridge.kt`, and `ZalithMainActivity.kt`, plus `Ok(())` return in `WindowEvent::RedrawRequested` and NDK 28 retry logic.
+            - **Removed Built-in `Horizon Android 0.7.4` UI & Fixed Game Exit**: Bypasses `draw_pages()` in `launcher.rs` and cleanly terminates the `:game` process (`restore_launcher`) on Quit Game so exiting Minecraft returns straight to HorizonZ Launcher.
+            - **Persistent Accounts & Non-Destructive In-Game Settings**: Saves accounts to `zalith-accounts.json` / `accounts.json` / `android-launcher.json` and preserves Minecraft's `options.txt` across restarts.
+            - **12 HD 16:9 Minecraft Wallpapers**: Cycles 12 HD 1280x720 Minecraft biome wallpapers every 5 seconds on the Dashboard card.
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt

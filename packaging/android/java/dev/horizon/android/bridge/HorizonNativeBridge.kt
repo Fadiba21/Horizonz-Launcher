@@ -424,8 +424,7 @@ object HorizonNativeBridge {
 
     fun readFullSystemLogs(context: Context, logEnabled: Boolean): String {
         if (!logEnabled) {
-            return "System & Game Logging is currently disabled in Settings.
-Enable 'System Logs' in the Settings tab to record launcher, download, and Minecraft runtime events."
+            return "System & Game Logging is currently disabled in Settings.\nEnable 'System Logs' in the Settings tab to record launcher, download, and Minecraft runtime events."
         }
         val home = ensureHomeDirectories(context)
         val sb = StringBuilder()
