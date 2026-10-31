@@ -119,7 +119,6 @@ data class StoreCatalogItem(
             StoreCategory.RESOURCE_PACK -> "resourcepacks"
             StoreCategory.SHADER_PACK -> "shaderpacks"
             StoreCategory.MODPACK -> "horizon-packs"
-            StoreCategory.NATIVE_MOD -> "horizon-native-mods"
             else -> "horizon-mods"
         }
 }
@@ -194,6 +193,44 @@ enum class HorizonContentOrigin(val serdeKey: String, val label: String) {
     MODRINTH("modrinth", "Modrinth")
 }
 
+/**
+ * Matches `crates/horizon-client/src/android/display.rs` `Aspect` (`#[serde(rename_all = "kebab-case")]`) in v0.7.5:
+ * - Native -> "native"
+ * - Wide -> "wide" (16:9)
+ * - Classic -> "classic" (4:3)
+ * - Square -> "square" (1:1)
+ */
+enum class HorizonScreenAspect(val serdeKey: String, val label: String) {
+    NATIVE("native", "Native Fullscreen (Device Ratio)"),
+    WIDE("wide", "Wide 16:9 Presentation"),
+    CLASSIC("classic", "Classic 4:3 Presentation"),
+    SQUARE("square", "Square 1:1 Presentation")
+}
+
+/**
+ * Matches `horizon-controller.txt` `menuNavigation` in Horizon Android v0.7.5:
+ * - Focus ("focus"): console-style D-pad & stick focus highlight
+ * - Pointer ("pointer"): virtual cursor moved by left stick
+ */
+enum class HorizonControllerNavMode(val serdeKey: String, val label: String) {
+    FOCUS("focus", "Focus Highlight (Console D-Pad / Stick)"),
+    POINTER("pointer", "Virtual Pointer Cursor (Stick Cursor)")
+}
+
+data class ModPackageDetailInfo(
+    val modId: String,
+    val displayName: String,
+    val version: String,
+    val description: String,
+    val author: String,
+    val apiLine: String,
+    val side: String,
+    val capabilities: List<String>,
+    val hasWasmBinary: Boolean,
+    val fileName: String,
+    val fileSizeFormatted: String
+)
+
 enum class ZalithThemePalette(val label: String, val primaryHex: Long, val secondaryHex: Long, val surfaceHex: Long) {
     MATERIAL_YOU("Material You (Dynamic)", 0xFF64B5F6, 0xFF81C784, 0xFF10131A),
     EMBERMIRE("Embermire Dark", 0xFFFF7043, 0xFFFFB74D, 0xFF12151E),
@@ -225,8 +262,27 @@ data class HorizonConfigState(
     val renderer: HorizonRendererMode = HorizonRendererMode.VULKAN_COMPAT,
     val renderScalePercent: Int = 75,
     val orientation: HorizonOrientation = HorizonOrientation.LANDSCAPE,
+    val screenAspect: HorizonScreenAspect = HorizonScreenAspect.NATIVE,
+    val screenImmersive: Boolean = true,
+    val screenAvoidCutout: Boolean = true,
+    val displayRefreshHz: Int = 0,
+    val performanceHintsAdpf: Boolean = true,
+    val gpuStageProfiling: Boolean = false,
     val inputHost: HorizonInputHost = HorizonInputHost.AUTO,
     val keypadControls: Boolean = false,
+    val sprintToggle: Boolean = false,
+    val inventoryTouchControls: Boolean = true,
+    val gyroAimingEnabled: Boolean = false,
+    val gyroSensitivityPercent: Int = 100,
+    val controllerVibration: Boolean = true,
+    val controllerNavMode: HorizonControllerNavMode = HorizonControllerNavMode.FOCUS,
+    val controllerSensitivityPercent: Int = 100,
+    val controllerDeadzonePercent: Int = 15,
+    val extraFullbright: Boolean = false,
+    val extraDynamicLights: Boolean = false,
+    val extraAutoReconnect: Boolean = true,
+    val extraMouseTweaks: Boolean = true,
+    val extraInventorySort: Boolean = true,
     val recordPerformance: Boolean = false,
     val modSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,
     val shaderSource: HorizonContentOrigin = HorizonContentOrigin.HORIZON,

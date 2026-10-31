@@ -56,7 +56,7 @@ jobs:
           exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.17 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.18 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.17 Patches
+      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.18 Patches
         run: |
           rm -rf /tmp/horizon-upstream
           git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
@@ -149,7 +149,7 @@ jobs:
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v117-${{ matrix.rust_target }}
+          key: horizon-real-engine-v118-${{ matrix.rust_target }}
 
       - name: Compile Real Horizon Rust Engine (libhorizon_android.so), Prestage 60 Touch Controls & Real HD Wallpapers (${{ matrix.abi }})
         run: |
@@ -158,7 +158,7 @@ jobs:
           cp -f LICENSE .local/android/gradle-assets/LICENSE.txt || cp -f LICENSE.txt .local/android/gradle-assets/LICENSE.txt || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
 
-          APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.3/Horizon-Android-0.7.3-${{ matrix.abi }}.apk"
+          APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.4/Horizon-Android-0.7.4-${{ matrix.abi }}.apk"
           if curl -fsSL -L "$APK_URL" -o /tmp/upstream_assets.apk; then
             unzip -q -o /tmp/upstream_assets.apk "assets/*" -d /tmp/upstream_assets_dir || true
             if [ -d "/tmp/upstream_assets_dir/assets" ]; then
@@ -236,18 +236,18 @@ jobs:
           fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.17-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.18-${{ matrix.abi }}.apk"
           ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.17-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.17-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.18-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.18-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.17 Release APKs
+    name: Publish HorizonZ 1.18 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -267,10 +267,10 @@ jobs:
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.17.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.17 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
+          tag_name: v1.18.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.18 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
           body: |
-            ## HorizonZ - Launcher v1.17
+            ## HorizonZ - Launcher v1.18
             - **Fixed Rust `error[E0753]` Inner Doc Comment Placement**: Places `static GAME_LAUNCHED_ONCE` after module `//!` doc comments and `use` imports right above `struct Launcher` in `launcher.rs`, and configures `armeabi-v7a` `--no-default-features --features audio` matching upstream `tools/android_build.py`.
             - **Fixed Touch Controls 17/60 Stall (`5/6 Preparing Touch Controls`)**: Pre-bundles all 60 Bedrock touch control icons into `engine-data.zip` during CI build AND patches `controls_with_progress` in `android_resources.rs` with 6s/10s timeouts, jsDelivr CDN mirror fallback, and safe PNG fallback.
             - **Background Download + Live Android System Notification**: Added `HorizonDownloadService` (`foregroundServiceType="dataSync"`) so asset downloads continue in the background when minimized and show live percentage, stage, download speed (`MB/s`), and URL in the phone's notification bar.

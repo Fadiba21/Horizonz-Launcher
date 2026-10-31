@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,55 @@ if launcher_rs.exists():
 
     old_struct = "pub(super) struct Launcher {"
     new_struct = '''static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn sanitize_and_repair_horizon_mods(home: &std::path::Path) {
+    let mods_dir = home.join("horizon-mods");
+    let _ = std::fs::create_dir_all(&mods_dir);
+    let Ok(entries) = std::fs::read_dir(&mods_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(fname) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !fname.ends_with(".hmod") {
+            continue;
+        }
+        let valid = (|| -> Option<bool> {
+            let file = std::fs::File::open(&path).ok()?;
+            let mut archive = zip::ZipArchive::new(file).ok()?;
+            let has_manifest = archive.by_name("horizon-mod.toml").is_ok();
+            Some(has_manifest)
+        })().unwrap_or(false);
+        if !valid {
+            let stem = fname.trim_end_matches(".hmod").to_lowercase();
+            let clean_id: String = stem
+                .chars()
+                .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' { c } else { '_' })
+                .collect();
+            let clean_id = clean_id.trim_matches('_');
+            let mod_id = if clean_id.is_empty() { "custom_mod" } else { clean_id };
+            if let Ok(file) = std::fs::File::create(&path) {
+                let mut zip_writer = zip::ZipWriter::new(file);
+                let options = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated);
+                if zip_writer.start_file("horizon-mod.toml", options).is_ok() {
+                    use std::io::Write;
+                    let manifest = format!(
+                        "id = \"{}\"\nname = \"{}\"\nversion = \"1.0.0\"\ndescription = \"Horizon 26.3 Mod\"\nauthors = [\"Horizon\"]\napi = \"0.2\"\nside = \"both\"\ncapabilities = [\"registries\"]\n",
+                        mod_id, mod_id
+                    );
+                    let _ = zip_writer.write_all(manifest.as_bytes());
+                }
+                let _ = zip_writer.finish();
+            }
+        }
+    }
+}
 
 fn apply_horizonz_custom_skin(home: &std::path::Path) {
     let custom_skin = home.join("custom_skin_active.png");
@@ -98,49 +148,49 @@ pub(super) struct Launcher {'''
         txt = txt.replace(old_restore_tail, new_restore_tail, 1)
         print("[HorizonZ Patch] Patched restore_launcher tail to write zalith-game-exited.flag and exit cleanly!")
 
-    # (b) Patch `fn resumed` with `zalith-game-boot.txt` milestones + custom skin sync + single-shot launch
-    old_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
-        if let Some(game) = &mut self.game {
-            return game.resumed(events);
-        }
-        if let Err(error) = self.open(events) {
-            self.fail(error);
-            events.exit();
-        }
-    }'''
-    new_resumed_fn = '''    fn resumed(&mut self, events: &ActiveEventLoop) {
-        if let Some(game) = &mut self.game {
-            let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "100|Main Menu Ready");
-            return game.resumed(events);
-        }
-        if GAME_LAUNCHED_ONCE.load(std::sync::atomic::Ordering::SeqCst) {
-            let _ = std::fs::write(self.home.join("zalith-game-exited.flag"), "1");
-            events.exit();
-            return;
-        }
-        let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "25|Loading Profile Catalog & Settings...");
-        self.catalog.refresh(&self.home);
-        let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "45|Creating Vulkan / WGPU Surface...");
-        if let Err(error) = self.open(events) {
-            self.fail(error);
-            events.exit();
-            return;
-        }
-        if self.game.is_none() && self.worker.is_none() {
-            if !GAME_LAUNCHED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "70|Loading Minecraft 26.3 Resources & Custom Skin...");
-                apply_horizonz_custom_skin(&self.home);
-                if let Err(error) = self.action(events) {
-                    self.fail(error);
-                } else {
-                    let _ = std::fs::write(self.home.join("zalith-game-boot.txt"), "100|Main Menu Ready");
-                }
-            }
-        }
-    }'''
-    if old_resumed_fn in txt:
-        txt = txt.replace(old_resumed_fn, new_resumed_fn, 1)
-        print("[HorizonZ Patch] Patched Launcher::resumed with boot milestones, custom skin sync, and single-shot direct boot!")
+    # (b) Patch `fn resumed` (matches both v0.7.5 with `self.configure_screen();` and earlier versions!)
+    resumed_re = re.compile(
+        r"fn resumed\(&mut self, events: &ActiveEventLoop\)\s*\{\s*(?:self\.configure_screen\(\);\s*)?if let Some\(game\) = &mut self\.game \{\s*return game\.resumed\(events\);\s*\}\s*if let Err\(error\) = self\.open\(events\) \{\s*self\.fail\(error\);\s*events\.exit\(\);\s*\}\s*\}",
+        re.MULTILINE,
+    )
+    cfg_line = "        self.configure_screen();\n" if "self.configure_screen();" in txt else ""
+    new_resumed_fn = (
+        "fn resumed(&mut self, events: &ActiveEventLoop) {\n"
+        + cfg_line
+        + "        if let Some(game) = &mut self.game {\n"
+        + "            let _ = std::fs::write(self.home.join(\"zalith-game-boot.txt\"), \"100|Main Menu Ready\");\n"
+        + "            return game.resumed(events);\n"
+        + "        }\n"
+        + "        if GAME_LAUNCHED_ONCE.load(std::sync::atomic::Ordering::SeqCst) {\n"
+        + "            let _ = std::fs::write(self.home.join(\"zalith-game-exited.flag\"), \"1\");\n"
+        + "            events.exit();\n"
+        + "            return;\n"
+        + "        }\n"
+        + "        let _ = std::fs::write(self.home.join(\"zalith-game-boot.txt\"), \"25|Verifying Horizon Mods & Profile Catalog...\");\n"
+        + "        sanitize_and_repair_horizon_mods(&self.home);\n"
+        + "        self.catalog.refresh(&self.home);\n"
+        + "        let _ = std::fs::write(self.home.join(\"zalith-game-boot.txt\"), \"45|Creating Vulkan / WGPU Surface...\");\n"
+        + "        if let Err(error) = self.open(events) {\n"
+        + "            self.fail(error);\n"
+        + "            events.exit();\n"
+        + "            return;\n"
+        + "        }\n"
+        + "        if self.game.is_none() && self.worker.is_none() {\n"
+        + "            if !GAME_LAUNCHED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {\n"
+        + "                let _ = std::fs::write(self.home.join(\"zalith-game-boot.txt\"), \"70|Loading Minecraft 26.3 Resources & Custom Skin...\");\n"
+        + "                apply_horizonz_custom_skin(&self.home);\n"
+        + "                if let Err(error) = self.action(events) {\n"
+        + "                    self.fail(error);\n"
+        + "                } else {\n"
+        + "                    let _ = std::fs::write(self.home.join(\"zalith-game-boot.txt\"), \"100|Main Menu Ready\");\n"
+        + "                }\n"
+        + "            }\n"
+        + "        }\n"
+        + "    }"
+    )
+    if resumed_re.search(txt):
+        txt = resumed_re.sub(new_resumed_fn, txt, count=1)
+        print("[HorizonZ Patch] Patched Launcher::resumed (v0.7.5 compatible) with mod repair, skin sync, and single-shot direct boot!")
 
     # (c) Auto-launch game when install worker finishes & signal 100|Main Menu Ready
     old_worker = '''        if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {

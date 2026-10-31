@@ -218,6 +218,7 @@ class ZalithMainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         HorizonNativeBridge.ensureHomeDirectories(this)
+        HorizonNativeBridge.syncAndRepairModsStorage(this, 0)
 
         if (Build.VERSION.SDK_INT >= 33) {
             try {
@@ -4159,23 +4160,34 @@ private fun CleanStoreViewport(
                                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                                         ) {
                                                             releases.forEach { rel ->
+                                                                val isDownloadingThis = storeProgress.running && storeProgress.activeItemId == detailProj.id
+                                                                val installedVerForProj = installedMap[detailProj.id] ?: installedMap[HorizonNativeBridge.sanitizeModId(detailProj.id)]
+                                                                val isThisExactVerInstalled = installedVerForProj != null && (installedVerForProj == rel.versionNumber || detailInstallState == StoreInstallState.INSTALLED && projectVersions.size == 1)
                                                                 Surface(
                                                                     shape = RoundedCornerShape(12.dp),
                                                                     color = Color(0xFF1B2125),
                                                                     modifier = Modifier
                                                                         .fillMaxWidth()
-                                                                        .animatedPressScale {
-                                                                            val dlItem = detailProj.copy(
-                                                                                version = rel.versionNumber,
-                                                                                supportedMcVersions = listOf(mcVer),
-                                                                                downloadUrl = rel.downloadUrl,
-                                                                                fileName = rel.fileName.ifBlank { detailProj.fileName },
-                                                                                sizeBytes = rel.sizeBytes
-                                                                            )
-                                                                            if (mcVer.contains("26.3")) {
-                                                                                startItemDownload(dlItem)
+                                                                        .animatedPressScale(enabled = !isDownloadingThis) {
+                                                                            if (isThisExactVerInstalled) {
+                                                                                Toast.makeText(
+                                                                                    context,
+                                                                                    "${detailProj.title} v${rel.versionNumber} sudah terpasang (tidak perlu instal ulang).",
+                                                                                    Toast.LENGTH_SHORT
+                                                                                ).show()
                                                                             } else {
-                                                                                pendingIncompatibleItem = dlItem
+                                                                                val dlItem = detailProj.copy(
+                                                                                    version = rel.versionNumber,
+                                                                                    supportedMcVersions = listOf(mcVer),
+                                                                                    downloadUrl = rel.downloadUrl.ifBlank { detailProj.downloadUrl },
+                                                                                    fileName = rel.fileName.ifBlank { detailProj.fileName },
+                                                                                    sizeBytes = if (rel.sizeBytes > 0) rel.sizeBytes else detailProj.sizeBytes
+                                                                                )
+                                                                                if (mcVer.contains("26.3")) {
+                                                                                    startItemDownload(dlItem)
+                                                                                } else {
+                                                                                    pendingIncompatibleItem = dlItem
+                                                                                }
                                                                             }
                                                                         }
                                                                 ) {
@@ -4226,17 +4238,25 @@ private fun CleanStoreViewport(
 
                                                                         Surface(
                                                                             shape = RoundedCornerShape(8.dp),
-                                                                            color = if (detailInstallState == StoreInstallState.INSTALLED) Color(0xFF1E3E29) else SkyBlueAccent
+                                                                            color = when {
+                                                                                isThisExactVerInstalled -> Color(0xFF1E3E29)
+                                                                                installedVerForProj != null -> Color(0xFF3E3117)
+                                                                                else -> SkyBlueAccent
+                                                                            }
                                                                         ) {
                                                                             Text(
-                                                                                text = when (detailInstallState) {
-                                                                                    StoreInstallState.INSTALLED -> "Installed"
-                                                                                    StoreInstallState.UPDATE_AVAILABLE -> "Update"
+                                                                                text = when {
+                                                                                    isThisExactVerInstalled -> "✓ Installed"
+                                                                                    installedVerForProj != null -> "↑ Update"
                                                                                     else -> "Install"
                                                                                 },
                                                                                 fontSize = 10.sp,
                                                                                 fontWeight = FontWeight.Bold,
-                                                                                color = if (detailInstallState == StoreInstallState.INSTALLED) Color(0xFF81C784) else SkyBlueDarkText,
+                                                                                color = when {
+                                                                                    isThisExactVerInstalled -> Color(0xFF81C784)
+                                                                                    installedVerForProj != null -> Color(0xFFFFD54F)
+                                                                                    else -> SkyBlueDarkText
+                                                                                },
                                                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                                                             )
                                                                         }
@@ -4330,6 +4350,68 @@ private fun CleanStoreViewport(
                                 color = Color(0xFFD0D8DE),
                                 lineHeight = 15.sp
                             )
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = when (detailInstallState) {
+                                    StoreInstallState.INSTALLED -> Color(0xFF1E3E29)
+                                    StoreInstallState.UPDATE_AVAILABLE -> Color(0xFFFFB74D)
+                                    StoreInstallState.NOT_INSTALLED -> SkyBlueAccent
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animatedPressScale(enabled = !storeProgress.running) {
+                                        when (detailInstallState) {
+                                            StoreInstallState.INSTALLED -> {
+                                                Toast.makeText(
+                                                    context,
+                                                    "${detailProj.title} (v${installedMap[detailProj.id] ?: detailProj.version}) sudah terpasang.",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                            StoreInstallState.UPDATE_AVAILABLE, StoreInstallState.NOT_INSTALLED -> {
+                                                if (detailProj.isCompatibleWith26_3) startItemDownload(detailProj)
+                                                else pendingIncompatibleItem = detailProj
+                                            }
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = when (detailInstallState) {
+                                            StoreInstallState.INSTALLED -> Icons.Default.CheckCircle
+                                            StoreInstallState.UPDATE_AVAILABLE -> Icons.Default.SystemUpdateAlt
+                                            StoreInstallState.NOT_INSTALLED -> Icons.Default.Download
+                                        },
+                                        contentDescription = null,
+                                        tint = when (detailInstallState) {
+                                            StoreInstallState.INSTALLED -> Color(0xFF81C784)
+                                            StoreInstallState.UPDATE_AVAILABLE -> Color(0xFF261600)
+                                            StoreInstallState.NOT_INSTALLED -> SkyBlueDarkText
+                                        },
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(Modifier.width(5.dp))
+                                    Text(
+                                        text = when (detailInstallState) {
+                                            StoreInstallState.INSTALLED -> "✓ Installed (v${installedMap[detailProj.id] ?: detailProj.version})"
+                                            StoreInstallState.UPDATE_AVAILABLE -> "↑ Update (${installedMap[detailProj.id] ?: "old"} → v${detailProj.version})"
+                                            StoreInstallState.NOT_INSTALLED -> "Install v${detailProj.version}"
+                                        },
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = when (detailInstallState) {
+                                            StoreInstallState.INSTALLED -> Color(0xFF81C784)
+                                            StoreInstallState.UPDATE_AVAILABLE -> Color(0xFF261600)
+                                            StoreInstallState.NOT_INSTALLED -> SkyBlueDarkText
+                                        }
+                                    )
+                                }
+                            }
 
                             if (detailInstallState == StoreInstallState.INSTALLED || detailInstallState == StoreInstallState.UPDATE_AVAILABLE) {
                                 Surface(
@@ -4531,17 +4613,25 @@ private fun StoreOrFileItemIconBadge(
 enum class FilesSortMode(val label: String) {
     BY_NAME("Sort by Name"),
     BY_FILE_NAME("Sort by File Name"),
-    BY_LAST_MODIFIED("Sort by Last Played")
+    BY_LAST_MODIFIED("Sort by Last Updated")
 }
 
+private data class PendingDeleteTarget(
+    val file: File,
+    val displayTitle: String,
+    val folder: String,
+    val folderLabel: String
+)
+
 /**
- * Manage Versions / Files Viewport matching 429799.mp4 100%:
- * - Left Sub-Navigation Rail: `Mods`, `Saves`, `Resource Packs`, `Shader Packs`, `Screenshots`
- * - Top Action Toolbar: Filter (`▽` on Mods), Sort (`≡↓` with floating popup menu `Sort by Name` / `Sort by File Name`),
- *   Pill Search Bar, `[ ] Available` checkbox, `+ Import`, `↓ Download` (switches to Store tab), `↻` Refresh.
- * - Floating `Save Info` Popover (`00:12` in 429799.mp4) with copyable `World Seed`.
- * - Floating `Resource Pack Information` Popover (`00:19` in 429799.mp4) with `Format Version` from `pack.mcmeta`.
- * - Floating `•••` More Options Menu (`Quick Play`, `Rename`, `Backup Save`, `Delete` on Saves; `Rename`, `Delete` on Packs).
+ * Synchronized Files & Mods Manager (`CleanFilesViewport`):
+ * - 100% two-way synced with the `playhorizon.dev/mods` Store (`horizon-mods/<id>.hmod`, `zalith-store-installed.json`,
+ *   `horizon-mods.txt`, `hmod_list.json`, `options.txt`).
+ * - Automatically deduplicates and self-heals `.hmod` ZIP archives on open & refresh (`syncAndRepairModsStorage`).
+ * - Includes an animated Delete Confirmation Pop-Up (`AlertDialog`) before deleting any Mod, Save, Resource Pack,
+ *   Shader Pack, or Screenshot.
+ * - Includes smooth transition animations (`AnimatedContent`, `AnimatedVisibility`, `animateColorAsState`,
+ *   `animateFloatAsState`) across folders, rows, switches, and expandable details.
  */
 @Composable
 private fun CleanFilesViewport(
@@ -4561,9 +4651,21 @@ private fun CleanFilesViewport(
     var showSortDropdown by remember { mutableStateOf(false) }
     var refreshCount by remember { mutableIntStateOf(0) }
 
+    // Automatically deduplicate & repair `.hmod` files whenever Files & Mods Manager opens or refreshes!
+    LaunchedEffect(currentFolder, refreshCount, profileSlot) {
+        if (currentFolder == "mods") {
+            withContext(Dispatchers.IO) {
+                HorizonNativeBridge.syncAndRepairModsStorage(context, profileSlot)
+            }
+        }
+    }
+
     // For Rename Dialog
     var renameTargetFile by remember { mutableStateOf<File?>(null) }
     var renameInputText by remember { mutableStateOf("") }
+
+    // For Delete Confirmation Pop-Up Dialog (`AlertDialog`)
+    var pendingDeleteTarget by remember { mutableStateOf<PendingDeleteTarget?>(null) }
 
     val categories = listOf(
         Triple("mods", "Mods", Icons.Default.Extension),
@@ -4573,28 +4675,35 @@ private fun CleanFilesViewport(
         Triple("screenshots", "Screenshots", Icons.Default.Image)
     )
 
-    val dirFile = File(home, currentFolder).apply { mkdirs() }
     val rawList = remember(currentFolder, refreshCount, profileSlot) {
         if (currentFolder == "mods") {
+            HorizonNativeBridge.syncAndRepairModsStorage(context, profileSlot)
             val hmodDir = File(home, "horizon-mods").apply { mkdirs() }
-            val combined = (hmodDir.listFiles()?.toList().orEmpty() + dirFile.listFiles()?.toList().orEmpty())
-                .filter { !it.name.endsWith(".part") && it.isFile }
-                .distinctBy { it.name }
-            combined
+            hmodDir.listFiles()
+                ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".tmp") && it.name.endsWith(".hmod", true) }
+                ?.distinctBy { HorizonNativeBridge.sanitizeModId(it.name) }
+                .orEmpty()
         } else {
-            dirFile.listFiles()?.filter { !it.name.endsWith(".part") }.orEmpty()
+            val dirFile = File(home, currentFolder).apply { mkdirs() }
+            dirFile.listFiles()?.filter { !it.name.endsWith(".part") && !it.name.endsWith(".tmp") }.orEmpty()
         }
     }
 
     val filteredList = remember(rawList, searchQuery, filterEnabledOnly, currentFolder, sortMode, refreshCount) {
         val base = rawList.filter { file ->
-            val matchesQuery = searchQuery.isBlank() || file.name.contains(searchQuery, ignoreCase = true)
+            val modInfo = if (currentFolder == "mods") HorizonNativeBridge.inspectModPackage(file) else null
+            val matchesQuery = searchQuery.isBlank() ||
+                file.name.contains(searchQuery, ignoreCase = true) ||
+                (modInfo != null && (modInfo.displayName.contains(searchQuery, ignoreCase = true) || modInfo.description.contains(searchQuery, ignoreCase = true)))
             val matchesEnabled = if (!filterEnabledOnly || currentFolder in listOf("saves", "screenshots")) true
             else HorizonNativeBridge.isContentItemEnabled(context, currentFolder, file.name, profileSlot)
             matchesQuery && matchesEnabled
         }
         when (sortMode) {
-            FilesSortMode.BY_NAME -> base.sortedBy { it.nameWithoutExtension.lowercase(Locale.US) }
+            FilesSortMode.BY_NAME -> base.sortedBy {
+                if (currentFolder == "mods") HorizonNativeBridge.inspectModPackage(it).displayName.lowercase(Locale.US)
+                else it.nameWithoutExtension.lowercase(Locale.US)
+            }
             FilesSortMode.BY_FILE_NAME -> base.sortedBy { it.name.lowercase(Locale.US) }
             FilesSortMode.BY_LAST_MODIFIED -> base.sortedByDescending { it.lastModified() }
         }
@@ -4604,6 +4713,7 @@ private fun CleanFilesViewport(
         if (uri != null) {
             val ext = when (currentFolder) {
                 "mods" -> ".hmod"
+                "shaderpacks" -> ".hshader"
                 "screenshots" -> ".png"
                 else -> ".zip"
             }
@@ -4622,12 +4732,13 @@ private fun CleanFilesViewport(
     renameTargetFile?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTargetFile = null },
-            title = { Text("Rename ${target.name}", style = MaterialTheme.typography.titleMedium) },
+            icon = { Icon(Icons.Default.Edit, contentDescription = null, tint = SkyBlueAccent) },
+            title = { Text("Ubah Nama ${target.name}", style = MaterialTheme.typography.titleMedium) },
             text = {
                 OutlinedTextField(
                     value = renameInputText,
                     onValueChange = { renameInputText = it },
-                    label = { Text("New Name", fontSize = 12.sp) },
+                    label = { Text("Nama Baru", fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -4642,12 +4753,71 @@ private fun CleanFilesViewport(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SkyBlueAccent)
                 ) {
-                    Text("Save", color = SkyBlueDarkText, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Simpan", color = SkyBlueDarkText, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renameTargetFile = null }) {
-                    Text("Cancel", fontSize = 12.sp)
+                    Text("Batal", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    // Delete Confirmation Pop-Up Dialog (`AlertDialog` requested by user!)
+    pendingDeleteTarget?.let { delTarget ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteTarget = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.WarningAmber,
+                    contentDescription = null,
+                    tint = Color(0xFFFF8A80)
+                )
+            },
+            title = {
+                Text(
+                    text = "Hapus ${delTarget.displayTitle}?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Apakah Anda yakin ingin menghapus '${delTarget.file.name}' dari kategori ${delTarget.folderLabel}?\n\nFile ini akan dihapus secara permanen dari perangkat dan statusnya di Store akan otomatis direset menjadi belum terpasang.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = delTarget
+                        pendingDeleteTarget = null
+                        HorizonNativeBridge.deleteContentItemWithSync(
+                            context = context,
+                            targetFile = target.file,
+                            folder = target.folder,
+                            profileSlot = profileSlot,
+                            logEnabled = logEnabled
+                        )
+                        refreshCount += 1
+                        Toast.makeText(
+                            context,
+                            "${target.displayTitle} berhasil dihapus.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) {
+                    Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Ya, Hapus Permanen", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteTarget = null }) {
+                    Text("Batal", fontSize = 12.sp)
                 }
             }
         )
@@ -4657,7 +4827,7 @@ private fun CleanFilesViewport(
         modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Left Sub-Navigation Rail (`Mods`, `Saves`, `Resource Packs`, `Shader Packs`, `Screenshots` — matching 429799.mp4)
+        // Left Sub-Navigation Rail (`Mods`, `Saves`, `Resource Packs`, `Shader Packs`, `Screenshots`)
         ZalithSubCategoryRail(
             items = categories,
             selectedItem = categories.first { it.first == currentFolder },
@@ -4666,7 +4836,7 @@ private fun CleanFilesViewport(
             onSelect = { currentFolder = it.first }
         )
 
-        // Right Main Rounded Slate Container (`429799.mp4` style)
+        // Right Main Rounded Slate Container
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = CardSlateBg,
@@ -4680,7 +4850,7 @@ private fun CleanFilesViewport(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Top Action Toolbar (`Filter  Sort  [ Search... ]  [ ] Available  + Import  ↓ Download  ↻`)
+                // Top Action Toolbar (`Filter  Sort  [ Search... ]  [ ] Enabled Only  + Import  ↓ Store  ↻`)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -4689,7 +4859,7 @@ private fun CleanFilesViewport(
                     if (currentFolder == "mods") {
                         Icon(
                             imageVector = Icons.Default.FilterAlt,
-                            contentDescription = "Filter",
+                            contentDescription = "Filter Enabled Mods",
                             tint = if (filterEnabledOnly) SkyBlueAccent else Color.White,
                             modifier = Modifier
                                 .size(19.dp)
@@ -4697,7 +4867,7 @@ private fun CleanFilesViewport(
                         )
                     }
 
-                    // Sort Icon with Floating Dropdown (`Sort by Name` / `Sort by File Name` — matching 00:16 of 429799.mp4)
+                    // Sort Icon with Floating Dropdown
                     Box {
                         Icon(
                             imageVector = Icons.Default.Sort,
@@ -4747,7 +4917,11 @@ private fun CleanFilesViewport(
                             contentAlignment = Alignment.CenterStart
                         ) {
                             if (searchQuery.isEmpty()) {
-                                Text("Search", fontSize = 12.sp, color = MutedSubtitleText)
+                                Text(
+                                    text = "Search ${categories.first { it.first == currentFolder }.second.lowercase(Locale.US)}...",
+                                    fontSize = 12.sp,
+                                    color = MutedSubtitleText
+                                )
                             }
                             BasicTextField(
                                 value = searchQuery,
@@ -4760,8 +4934,21 @@ private fun CleanFilesViewport(
                         }
                     }
 
-                    // `[ ] Available` checkbox shown on Saves & Resource Packs (matching 00:00, 00:11, 00:18 in 429799.mp4)
-                    if (currentFolder in listOf("saves", "resourcepacks")) {
+                    // Item counter badge
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = CardRowBg
+                    ) {
+                        Text(
+                            text = "${filteredList.size} items",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SkyBlueAccent,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+
+                    if (currentFolder in listOf("saves", "resourcepacks", "shaderpacks")) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.animatedPressScale { filterEnabledOnly = !filterEnabledOnly }
@@ -4777,94 +4964,121 @@ private fun CleanFilesViewport(
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("Available", fontSize = 11.sp, color = Color.White)
+                            Text("Active", fontSize = 11.sp, color = Color.White)
                         }
                     }
 
                     // `+ Import` action button
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .animatedPressScale { picker.launch("*/*") }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = CardRowBg,
+                        modifier = Modifier.animatedPressScale { picker.launch("*/*") }
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import", tint = Color.White, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Import", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Import", tint = SkyBlueAccent, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Import", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
                     }
 
-                    // `↓ Download` action button (switches directly to Store tab with matching category!)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .animatedPressScale {
-                                val targetCat = when (currentFolder) {
-                                    "mods" -> StoreCategory.MOD
-                                    "saves" -> StoreCategory.MODPACK
-                                    "resourcepacks" -> StoreCategory.RESOURCE_PACK
-                                    "shaderpacks" -> StoreCategory.SHADER_PACK
-                                    else -> StoreCategory.MOD
-                                }
-                                onNavigateToStoreCategory(targetCat)
+                    // `↓ Store` action button (switches directly to Store tab with matching category!)
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = SubRailCapsuleActive,
+                        modifier = Modifier.animatedPressScale {
+                            val targetCat = when (currentFolder) {
+                                "mods" -> StoreCategory.MOD
+                                "saves" -> StoreCategory.MODPACK
+                                "resourcepacks" -> StoreCategory.RESOURCE_PACK
+                                "shaderpacks" -> StoreCategory.SHADER_PACK
+                                else -> StoreCategory.MOD
                             }
+                            onNavigateToStoreCategory(targetCat)
+                        }
                     ) {
-                        Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Store", tint = SkyBlueAccent, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Store", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = SkyBlueAccent)
+                        }
                     }
 
-                    // `↻` Refresh icon button
+                    // `↻` Refresh & Auto-Repair icon button
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh",
+                        contentDescription = "Refresh & Sync",
                         tint = Color.White,
                         modifier = Modifier
-                            .size(19.dp)
-                            .animatedPressScale { refreshCount += 1 }
+                            .size(20.dp)
+                            .animatedPressScale {
+                                HorizonNativeBridge.syncAndRepairModsStorage(context, profileSlot)
+                                refreshCount += 1
+                                Toast.makeText(context, "Folder ${currentFolder} disinkronkan & diverifikasi!", Toast.LENGTH_SHORT).show()
+                            }
                     )
                 }
 
-                // Animated List Content
+                // Smooth Animated List Content across folders and filter states
                 AnimatedContent(
-                    targetState = currentFolder,
+                    targetState = Pair(currentFolder, filteredList.size),
                     transitionSpec = {
-                        (fadeIn(tween(190)) + slideInVertically(tween(190)) { h -> h / 14 })
-                            .togetherWith(fadeOut(tween(140)))
+                        (fadeIn(tween(240, easing = FastOutSlowInEasing)) +
+                            slideInVertically(tween(240, easing = FastOutSlowInEasing)) { h -> h / 12 } +
+                            scaleIn(initialScale = 0.98f, animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                            .togetherWith(
+                                fadeOut(tween(150)) +
+                                    scaleOut(targetScale = 0.98f, animationSpec = tween(150))
+                            )
                             .using(sizeTransform = null)
                     },
                     modifier = Modifier.fillMaxSize(),
-                    label = "FilesFolderTransition"
-                ) { folder ->
+                    label = "FilesFolderAnimatedTransition"
+                ) { (folder, _) ->
+                    val folderLabel = categories.firstOrNull { it.first == folder }?.second ?: folder
                     if (filteredList.isEmpty()) {
-                        // Centered dark pill empty state (`00:25` in 429799.mp4: "No shader packs for this version")
                         val emptyLabel = when (folder) {
-                            "mods" -> "No mods for this version"
-                            "saves" -> "No saves for this version"
-                            "resourcepacks" -> "No resource packs for this version"
-                            "shaderpacks" -> "No shader packs for this version"
-                            "screenshots" -> "No screenshots for this version"
-                            else -> "No items for this version"
+                            "mods" -> "Belum ada mod terpasang untuk profil ini (Klik 'Store' untuk mengunduh dari playhorizon.dev/mods)"
+                            "saves" -> "Belum ada dunia (World Save) untuk versi 26.3"
+                            "resourcepacks" -> "Belum ada Resource Pack untuk versi 26.3"
+                            "shaderpacks" -> "Belum ada Shader Pack (.hshader) untuk versi 26.3"
+                            "screenshots" -> "Belum ada tangkapan layar (Screenshots)"
+                            else -> "Tidak ada item di folder ini"
                         }
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Surface(
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 color = CardRowBg
                             ) {
-                                Text(
-                                    text = emptyLabel,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFD5DEE5),
-                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = SkyBlueAccent, modifier = Modifier.size(18.dp))
+                                    Text(
+                                        text = emptyLabel,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFFD5DEE5)
+                                    )
+                                }
                             }
                         }
                     } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             items(filteredList, key = { it.absolutePath }) { file ->
                                 FileManagerRowCard(
                                     file = file,
                                     folder = folder,
+                                    folderLabel = folderLabel,
                                     profileSlot = profileSlot,
                                     logEnabled = logEnabled,
                                     refreshCount = refreshCount,
@@ -4872,6 +5086,14 @@ private fun CleanFilesViewport(
                                     onRequestRename = { target ->
                                         renameInputText = target.nameWithoutExtension
                                         renameTargetFile = target
+                                    },
+                                    onRequestDelete = { targetFile, title ->
+                                        pendingDeleteTarget = PendingDeleteTarget(
+                                            file = targetFile,
+                                            displayTitle = title,
+                                            folder = folder,
+                                            folderLabel = folderLabel
+                                        )
                                     },
                                     onQuickPlayWorld = onQuickPlayWorld
                                 )
@@ -4888,16 +5110,19 @@ private fun CleanFilesViewport(
 private fun FileManagerRowCard(
     file: File,
     folder: String,
+    folderLabel: String,
     profileSlot: Int,
     logEnabled: Boolean,
     refreshCount: Int,
     onTriggerRefresh: () -> Unit,
     onRequestRename: (File) -> Unit,
+    onRequestDelete: (File, String) -> Unit,
     onQuickPlayWorld: () -> Unit
 ) {
     val context = LocalContext.current
     var showInfoPopover by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var expandedDetails by remember { mutableStateOf(false) }
 
     val isToggleable = folder in listOf("mods", "shaderpacks", "resourcepacks")
     val isEnabled = remember(file.name, refreshCount, folder) {
@@ -4913,6 +5138,9 @@ private fun FileManagerRowCard(
         }
     }
 
+    val modDetail = remember(file.absolutePath, file.lastModified(), folder, refreshCount) {
+        if (folder == "mods") HorizonNativeBridge.inspectModPackage(file) else null
+    }
     val saveDetail = remember(file.absolutePath, file.lastModified(), folder) {
         if (folder == "saves") HorizonNativeBridge.inspectWorldSave(file) else null
     }
@@ -4921,319 +5149,408 @@ private fun FileManagerRowCard(
     }
 
     val displayTitle = when {
+        modDetail != null -> modDetail.displayName
         saveDetail != null -> saveDetail.displayName
         packDetail != null -> packDetail.title
         else -> file.nameWithoutExtension.replace("-", " ").replace("_", " ")
     }
 
     val subtitleText = when {
+        modDetail != null -> "${modDetail.description} • by ${modDetail.author} (${modDetail.fileName})"
         saveDetail != null -> "Last played: ${saveDetail.lastPlayedFormatted}"
         packDetail != null -> packDetail.description
         else -> "File Name: ${file.name}"
     }
 
+    val animatedBorderColor by animateColorAsState(
+        targetValue = if (isToggleable && isEnabled) SkyBlueAccent.copy(alpha = 0.38f) else Color.Transparent,
+        animationSpec = tween(220),
+        label = "ManagerRowBorderColor"
+    )
+    val animatedCardColor by animateColorAsState(
+        targetValue = if (expandedDetails) SubRailCapsuleActive.copy(alpha = 0.55f) else CardRowBg,
+        animationSpec = tween(220),
+        label = "ManagerRowBgColor"
+    )
+
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = CardRowBg,
-        modifier = Modifier.fillMaxWidth()
+        color = animatedCardColor,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, animatedBorderColor, RoundedCornerShape(16.dp))
+            .animatedPressScale { expandedDetails = !expandedDetails }
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left 44dp Icon (from pack.png / icon.png or badge)
-            if (localIconBmp != null) {
-                Image(
-                    bitmap = localIconBmp!!.asImageBitmap(),
-                    contentDescription = displayTitle,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                )
-            } else {
-                StoreOrFileItemIconBadge(
-                    title = displayTitle,
-                    isMod = folder == "mods",
-                    isWorld = folder == "saves",
-                    size = 44.dp
-                )
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            // Middle Title + Lavender Badges + Subtitle (matching 429799.mp4)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = displayTitle,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    when (folder) {
-                        "mods" -> {
-                            if (file.name.endsWith(".hmod", true)) {
-                                LavenderTagBadge(text = "Horizon")
-                                LavenderTagBadge(text = "26.3")
-                            } else {
-                                LavenderTagBadge(text = "Fabric")
-                                if (file.name.contains("quilt", true) || file.name.contains("config", true)) {
-                                    LavenderTagBadge(text = "Quilt")
-                                }
-                            }
-                        }
-                        "saves" -> {
-                            LavenderTagBadge(text = "26.3")
-                            LavenderTagBadge(text = saveDetail?.gameMode ?: "Survival Mode")
-                        }
-                    }
-                }
-                Text(
-                    text = subtitleText,
-                    fontSize = 11.sp,
-                    color = MutedSubtitleText,
-                    maxLines = 2,
-                    lineHeight = 14.sp,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(Modifier.width(10.dp))
-
-            // Right Action Icons (matching 429799.mp4: Mods has `↻ ☑ ⓘ 🗑`; Saves/ResourcePacks/Shaders have `ⓘ •••`)
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (folder == "mods") {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reload",
-                        tint = Color(0xFFD5DEE5),
+                // Left 44dp Icon
+                if (localIconBmp != null) {
+                    Image(
+                        bitmap = localIconBmp!!.asImageBitmap(),
+                        contentDescription = displayTitle,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(19.dp)
-                            .animatedPressScale(onClick = onTriggerRefresh)
-                    )
-
-                    Checkbox(
-                        checked = isEnabled,
-                        onCheckedChange = {
-                            HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
-                            onTriggerRefresh()
-                        },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = SkyBlueAccent,
-                            checkmarkColor = SkyBlueDarkText,
-                            uncheckedColor = MutedSubtitleText
-                        ),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                // `ⓘ` Info Icon with Floating Popover Card (`00:12` Save Info & `00:19` Resource Pack Information in 429799.mp4!)
-                Box {
-                    Icon(
-                        imageVector = Icons.Outlined.Info,
-                        contentDescription = "Info",
-                        tint = Color(0xFFD5DEE5),
-                        modifier = Modifier
-                            .size(20.dp)
-                            .animatedPressScale { showInfoPopover = true }
-                    )
-
-                    DropdownMenu(
-                        expanded = showInfoPopover,
-                        onDismissRequest = { showInfoPopover = false },
-                        modifier = Modifier
-                            .widthIn(min = 250.dp, max = 320.dp)
-                            .background(Color(0xFF283036))
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            if (saveDetail != null) {
-                                // Exact `Save Info` Popover from 00:12 of 429799.mp4!
-                                Text(
-                                    text = "Save Info",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text("File Name: ${saveDetail.folderName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("Game Mode: ${saveDetail.gameMode}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("Difficulty: ${saveDetail.difficulty}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("Play Time: ${saveDetail.playTimeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = "World Seed: ${saveDetail.worldSeed}",
-                                        fontSize = 12.sp,
-                                        color = Color(0xFFE0E6EB),
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ContentCopy,
-                                        contentDescription = "Copy Seed",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .size(15.dp)
-                                            .animatedPressScale {
-                                                HorizonNativeBridge.copyToClipboard(context, "World Seed", saveDetail.worldSeed)
-                                            }
-                                    )
-                                }
-                            } else if (packDetail != null) {
-                                // Exact `Resource Pack Information` Popover from 00:19 of 429799.mp4!
-                                Text(
-                                    text = if (folder == "shaderpacks") "Shader Pack Information" else "Resource Pack Information",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text("Resource Pack Type: ${packDetail.packType}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("File Name: ${packDetail.fileName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("File Size: ${packDetail.fileSizeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text("Format Version: ${packDetail.formatVersion}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                            } else {
-                                Text(
-                                    text = "Mod Information",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text("File Name: ${file.name}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
-                                Text(
-                                    text = "File Size: ${String.format(Locale.US, "%.2f KB", file.length() / 1024.0)}",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFE0E6EB)
-                                )
-                                Text(
-                                    text = "Status: ${if (isEnabled) "Enabled" else "Disabled"}",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFE0E6EB)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (folder == "mods") {
-                    Icon(
-                        imageVector = Icons.Outlined.Delete,
-                        contentDescription = "Delete",
-                        tint = Color(0xFFD5DEE5),
-                        modifier = Modifier
-                            .size(20.dp)
-                            .animatedPressScale {
-                                file.deleteRecursively()
-                                onTriggerRefresh()
-                            }
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
                     )
                 } else {
-                    // `•••` More Options Button (`00:14` on Saves & `00:22` on Resource Packs in 429799.mp4!)
+                    StoreOrFileItemIconBadge(
+                        title = displayTitle,
+                        isMod = folder == "mods",
+                        isWorld = folder == "saves",
+                        size = 44.dp
+                    )
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                // Middle Title + Badges + Subtitle
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = displayTitle,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        when (folder) {
+                            "mods" -> {
+                                LavenderTagBadge(text = "v${modDetail?.version ?: "1.0.0"}")
+                                LavenderTagBadge(text = "26.3")
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isEnabled) Color(0xFF1E3E29) else Color(0xFF3A2326)
+                                ) {
+                                    Text(
+                                        text = if (isEnabled) "ON" else "OFF",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isEnabled) Color(0xFF81C784) else Color(0xFFFF8A80),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            "saves" -> {
+                                LavenderTagBadge(text = "26.3")
+                                LavenderTagBadge(text = saveDetail?.gameMode ?: "Survival Mode")
+                            }
+                            "resourcepacks", "shaderpacks" -> {
+                                LavenderTagBadge(text = "26.3")
+                                if (isEnabled) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFF1E3E29)
+                                    ) {
+                                        Text(
+                                            text = "ACTIVE",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF81C784),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        text = subtitleText,
+                        fontSize = 11.sp,
+                        color = MutedSubtitleText,
+                        maxLines = 2,
+                        lineHeight = 14.sp,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(Modifier.width(10.dp))
+
+                // Right Action Controls
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (isToggleable) {
+                        Checkbox(
+                            checked = isEnabled,
+                            onCheckedChange = {
+                                HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
+                                onTriggerRefresh()
+                            },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = SkyBlueAccent,
+                                checkmarkColor = SkyBlueDarkText,
+                                uncheckedColor = MutedSubtitleText
+                            ),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // `ⓘ` Info Icon with Floating Popover Card
                     Box {
                         Icon(
-                            imageVector = Icons.Default.MoreHoriz,
-                            contentDescription = "More Options",
+                            imageVector = Icons.Outlined.Info,
+                            contentDescription = "Info",
                             tint = Color(0xFFD5DEE5),
                             modifier = Modifier
                                 .size(20.dp)
-                                .animatedPressScale { showMoreMenu = true }
+                                .animatedPressScale { showInfoPopover = true }
                         )
 
                         DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false },
-                            modifier = Modifier.background(Color(0xFF283036))
+                            expanded = showInfoPopover,
+                            onDismissRequest = { showInfoPopover = false },
+                            modifier = Modifier
+                                .widthIn(min = 260.dp, max = 330.dp)
+                                .background(Color(0xFF283036))
                         ) {
-                            if (folder == "saves") {
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Quick Play", fontSize = 12.sp, color = Color.White) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onQuickPlayWorld()
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                if (saveDetail != null) {
+                                    Text("Save Info", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("File Name: ${saveDetail.folderName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("Game Mode: ${saveDetail.gameMode}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("Difficulty: ${saveDetail.difficulty}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("Play Time: ${saveDetail.playTimeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "World Seed: ${saveDetail.worldSeed}",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFFE0E6EB),
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "Copy Seed",
+                                            tint = SkyBlueAccent,
+                                            modifier = Modifier
+                                                .size(15.dp)
+                                                .animatedPressScale {
+                                                    HorizonNativeBridge.copyToClipboard(context, "World Seed", saveDetail.worldSeed)
+                                                }
+                                        )
                                     }
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onRequestRename(file)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Backup Save", fontSize = 12.sp, color = Color.White) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        HorizonNativeBridge.backupWorldSave(context, file, logEnabled)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        file.deleteRecursively()
-                                        onTriggerRefresh()
-                                    }
-                                )
-                            } else {
-                                if (isToggleable) {
+                                } else if (packDetail != null) {
+                                    Text(
+                                        text = if (folder == "shaderpacks") "Shader Pack Information" else "Resource Pack Information",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Pack Type: ${packDetail.packType}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("File Name: ${packDetail.fileName}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("File Size: ${packDetail.fileSizeFormatted}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("Format Version: ${packDetail.formatVersion}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                } else if (modDetail != null) {
+                                    Text("Horizon Mod Manifest (horizon-mod.toml)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("Mod ID: ${modDetail.modId}", fontSize = 12.sp, color = SkyBlueAccent)
+                                    Text("Version: ${modDetail.version} (API ${modDetail.apiLine})", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("Author: ${modDetail.author}", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text("File: ${modDetail.fileName} (${modDetail.fileSizeFormatted})", fontSize = 12.sp, color = Color(0xFFE0E6EB))
+                                    Text(
+                                        text = "Capabilities: ${modDetail.capabilities.joinToString(", ").ifEmpty { "registries" }}",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF81C784)
+                                    )
+                                    Text(
+                                        text = "Status: ${if (isEnabled) "ON (Synced with horizon-mods.txt)" else "OFF (Disabled)"}",
+                                        fontSize = 12.sp,
+                                        color = if (isEnabled) Color(0xFF81C784) else Color(0xFFFF8A80)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (folder == "mods") {
+                        // Delete Icon -> Opens Delete Confirmation Pop-Up Dialog!
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = "Delete Mod",
+                            tint = Color(0xFFFF8A80),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .animatedPressScale {
+                                    onRequestDelete(file, displayTitle)
+                                }
+                        )
+                    } else {
+                        // `•••` More Options Button + Direct Delete Icon with Confirmation Pop-Up!
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = "Delete",
+                            tint = Color(0xFFFF8A80),
+                            modifier = Modifier
+                                .size(19.dp)
+                                .animatedPressScale {
+                                    onRequestDelete(file, displayTitle)
+                                }
+                        )
+                        Box {
+                            Icon(
+                                imageVector = Icons.Default.MoreHoriz,
+                                contentDescription = "More Options",
+                                tint = Color(0xFFD5DEE5),
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .animatedPressScale { showMoreMenu = true }
+                            )
+
+                            DropdownMenu(
+                                expanded = showMoreMenu,
+                                onDismissRequest = { showMoreMenu = false },
+                                modifier = Modifier.background(Color(0xFF283036))
+                            ) {
+                                if (folder == "saves") {
                                     DropdownMenuItem(
-                                        leadingIcon = {
-                                            Icon(
-                                                if (isEnabled) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                                contentDescription = null,
-                                                tint = SkyBlueAccent,
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                        },
-                                        text = { Text(if (isEnabled) "Disable Pack" else "Enable Pack", fontSize = 12.sp, color = Color.White) },
+                                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Quick Play", fontSize = 12.sp, color = Color.White) },
                                         onClick = {
                                             showMoreMenu = false
-                                            HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
-                                            onTriggerRefresh()
+                                            onQuickPlayWorld()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onRequestRename(file)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Backup Save", fontSize = 12.sp, color = Color.White) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            HorizonNativeBridge.backupWorldSave(context, file, logEnabled)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onRequestDelete(file, displayTitle)
+                                        }
+                                    )
+                                } else {
+                                    if (isToggleable) {
+                                        DropdownMenuItem(
+                                            leadingIcon = {
+                                                Icon(
+                                                    if (isEnabled) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                                    contentDescription = null,
+                                                    tint = SkyBlueAccent,
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                            },
+                                            text = { Text(if (isEnabled) "Disable Pack" else "Enable Pack", fontSize = 12.sp, color = Color.White) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
+                                                onTriggerRefresh()
+                                            }
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onRequestRename(file)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
+                                        text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onRequestDelete(file, displayTitle)
                                         }
                                     )
                                 }
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Rename", fontSize = 12.sp, color = Color.White) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onRequestRename(file)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFFF8A80), modifier = Modifier.size(17.dp)) },
-                                    text = { Text("Delete", fontSize = 12.sp, color = Color(0xFFFF8A80)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        file.deleteRecursively()
-                                        onTriggerRefresh()
-                                    }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Smooth Expandable Details Drawer when tapping a row card in Manager
+            AnimatedVisibility(
+                visible = expandedDetails,
+                enter = expandVertically(tween(220, easing = FastOutSlowInEasing)) + fadeIn(tween(200)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(150))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 68.dp, end = 14.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = when {
+                            modDetail != null -> "ID: ${modDetail.modId} • API ${modDetail.apiLine} • Side: ${modDetail.side} • Size: ${modDetail.fileSizeFormatted}"
+                            packDetail != null -> "${packDetail.packType} • Format v${packDetail.formatVersion} • Size: ${packDetail.fileSizeFormatted}"
+                            saveDetail != null -> "${saveDetail.difficulty} • ${saveDetail.playTimeFormatted} • Seed: ${saveDetail.worldSeed}"
+                            else -> "File: ${file.name} (${file.length() / 1024} KB)"
+                        },
+                        fontSize = 10.sp,
+                        color = SkyBlueAccent
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (isToggleable) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isEnabled) Color(0xFF1E3E29) else SkyBlueAccent,
+                                modifier = Modifier.animatedPressScale {
+                                    HorizonNativeBridge.toggleContentItem(context, folder, file.name, profileSlot, logEnabled)
+                                    onTriggerRefresh()
+                                }
+                            ) {
+                                Text(
+                                    text = if (isEnabled) "Matikan (Disable)" else "Aktifkan (Enable)",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isEnabled) Color(0xFF81C784) else SkyBlueDarkText,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF3A2326),
+                            modifier = Modifier.animatedPressScale { onRequestDelete(file, displayTitle) }
+                        ) {
+                            Text(
+                                text = "Hapus",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFF8A80),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
                         }
                     }
                 }
@@ -5266,9 +5583,9 @@ private fun CleanSettingsViewport(
         AnimatedContent(
             targetState = selectedSection,
             transitionSpec = {
-                (fadeIn(tween(190, easing = FastOutSlowInEasing)) +
-                    slideInVertically(tween(190, easing = FastOutSlowInEasing)) { h -> h / 14 })
-                    .togetherWith(fadeOut(tween(140)))
+                (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(220, easing = FastOutSlowInEasing)) { h -> h / 14 })
+                    .togetherWith(fadeOut(tween(150)))
                     .using(sizeTransform = null)
             },
             modifier = Modifier
@@ -5285,8 +5602,8 @@ private fun CleanSettingsViewport(
                 when (section) {
                     SettingsSubCategory.RENDERER -> {
                         ZalithSettingDropdownCard(
-                            title = "Graphics API",
-                            description = "Set the graphics API used by Minecraft 26.3+",
+                            title = "Graphics API (Horizon Android 0.7.5)",
+                            description = "Set the native Vulkan / OpenGL ES renderer used by Minecraft 26.3",
                             selectedItem = config.renderer,
                             options = HorizonRendererMode.entries,
                             itemLabel = { it.label },
@@ -5294,17 +5611,26 @@ private fun CleanSettingsViewport(
                         )
 
                         ZalithSettingDropdownCard(
-                            title = "Resolution Rule",
-                            description = "Choose how the game window resolution and screen orientation are handled",
+                            title = "Screen Presentation Aspect Ratio (v0.7.5)",
+                            description = "Configure display fitting ratio for both logical rendering and touch input bounds",
+                            selectedItem = config.screenAspect,
+                            options = HorizonScreenAspect.entries,
+                            itemLabel = { it.label },
+                            onSelect = { onConfigChange(config.copy(screenAspect = it)) }
+                        )
+
+                        ZalithSettingDropdownCard(
+                            title = "Orientation Rule",
+                            description = "Choose how screen orientation is locked or sensor-rotated",
                             selectedItem = config.orientation,
                             options = HorizonOrientation.entries,
-                            itemLabel = { "Percentage • ${it.label}" },
+                            itemLabel = { it.label },
                             onSelect = { onConfigChange(config.copy(orientation = it)) }
                         )
 
                         ZalithSettingSliderCard(
                             title = "Resolution Scale",
-                            description = "Lower values improve performance; higher values enhance graphics quality. Adjust according to your needs",
+                            description = "Lower values boost FPS on mobile GPUs; higher values sharpen 3D terrain & HUD",
                             value = config.renderScalePercent,
                             valueRange = 25..100,
                             step = 5,
@@ -5312,11 +5638,41 @@ private fun CleanSettingsViewport(
                             onValueChange = { onConfigChange(config.copy(renderScalePercent = it)) }
                         )
 
+                        ZalithSettingDropdownCard(
+                            title = "Preferred Display Refresh Rate (Android 11+)",
+                            description = "Request high-refresh display mode from SurfaceFlinger (display_hz in v0.7.5)",
+                            selectedItem = config.displayRefreshHz,
+                            options = listOf(0, 60, 90, 120, 144),
+                            itemLabel = { if (it == 0) "Auto (System Default)" else "$it Hz" },
+                            onSelect = { onConfigChange(config.copy(displayRefreshHz = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Avoid Camera Cutout / Notch (v0.7.5)",
+                            description = "Inset viewport safely away from punch-hole cameras and display cutouts",
+                            checked = config.screenAvoidCutout,
+                            onCheckedChange = { onConfigChange(config.copy(screenAvoidCutout = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Immersive Fullscreen Navigation (v0.7.5)",
+                            description = "Hide Android system status and navigation bars while playing",
+                            checked = config.screenImmersive,
+                            onCheckedChange = { onConfigChange(config.copy(screenImmersive = it)) }
+                        )
+
                         ZalithSettingToggleCard(
                             title = "VSync (Vertical Synchronization)",
-                            description = "Synchronize frame rate with display refresh rate in options.txt to prevent screen tearing",
+                            description = "Synchronize frame rate with display refresh rate in options.txt",
                             checked = config.mcVsync,
                             onCheckedChange = { onConfigChange(config.copy(mcVsync = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Android ADPF Performance Hints (v0.7.5)",
+                            description = "Send Android Dynamic Performance Framework CPU/GPU thermal scheduling hints",
+                            checked = config.performanceHintsAdpf,
+                            onCheckedChange = { onConfigChange(config.copy(performanceHintsAdpf = it)) }
                         )
                     }
 
@@ -5368,12 +5724,43 @@ private fun CleanSettingsViewport(
                             itemLabel = { if (it == 0) "Auto" else "${it}x" },
                             onSelect = { onConfigChange(config.copy(mcGuiScale = it)) }
                         )
+
+                        // Built-in Horizon 26.3 Client Extras (`horizon-extras.txt`)
+                        ZalithSettingToggleCard(
+                            title = "Fullbright Cave Lighting (Horizon Extra)",
+                            description = "Display blocks and entities with a fully bright lightmap in dark caves (horizon-extras.txt)",
+                            checked = config.extraFullbright,
+                            onCheckedChange = { onConfigChange(config.copy(extraFullbright = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Dynamic Handheld Lights (Horizon Extra)",
+                            description = "Held torches, lanterns, and glowing items illuminate nearby blocks in real time",
+                            checked = config.extraDynamicLights,
+                            onCheckedChange = { onConfigChange(config.copy(extraDynamicLights = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Auto-Reconnect on Server Drop (Horizon Extra)",
+                            description = "Automatically retry server connection with 5s–60s backoff if disconnected",
+                            checked = config.extraAutoReconnect,
+                            onCheckedChange = { onConfigChange(config.copy(extraAutoReconnect = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Mouse Tweaks & Inventory Sort Button (Horizon Extra)",
+                            description = "Enable fast slot dragging and one-click chest/inventory sorting in horizon-extras.txt",
+                            checked = config.extraMouseTweaks,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(extraMouseTweaks = it, extraInventorySort = it))
+                            }
+                        )
                     }
 
                     SettingsSubCategory.CONTROLS -> {
                         ZalithSettingDropdownCard(
-                            title = "Input Mode",
-                            description = "Select primary input host for Minecraft 26.3 runtime",
+                            title = "Input Mode (v0.7.5)",
+                            description = "Select primary input host (Auto follows active touch, mouse, or controller input)",
                             selectedItem = config.inputHost,
                             options = HorizonInputHost.entries,
                             itemLabel = { it.label },
@@ -5382,10 +5769,43 @@ private fun CleanSettingsViewport(
 
                         ZalithSettingToggleCard(
                             title = "On-Screen Touch Keypad",
-                            description = "Enable movable virtual touch keypad overlay inside Minecraft (horizon-keypad.json)",
+                            description = "Enable customizable virtual touch buttons inside Minecraft (horizon-keypad.json)",
                             checked = config.keypadControls,
                             onCheckedChange = { onConfigChange(config.copy(keypadControls = it)) }
                         )
+
+                        ZalithSettingToggleCard(
+                            title = "Sprint Toggle / Tap-to-Sprint (v0.7.4+)",
+                            description = "Use tap-to-toggle mode for the touch Sprint button instead of holding",
+                            checked = config.sprintToggle,
+                            onCheckedChange = { onConfigChange(config.copy(sprintToggle = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Inventory Touch Action Buttons (v0.7.4+)",
+                            description = "Keep Attack (left-click), Interact (right-click), and Sneak (Shift) touch buttons visible inside inventories",
+                            checked = config.inventoryTouchControls,
+                            onCheckedChange = { onConfigChange(config.copy(inventoryTouchControls = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Gyroscope Camera Aiming (v0.7.4+)",
+                            description = "Enable motion-sensor gyroscope camera aiming with adaptive axes",
+                            checked = config.gyroAimingEnabled,
+                            onCheckedChange = { onConfigChange(config.copy(gyroAimingEnabled = it)) }
+                        )
+
+                        if (config.gyroAimingEnabled) {
+                            ZalithSettingSliderCard(
+                                title = "Gyroscope Aim Sensitivity",
+                                description = "Adjust motion sensor aiming speed multiplier",
+                                value = config.gyroSensitivityPercent,
+                                valueRange = 10..200,
+                                step = 10,
+                                valueSuffix = "%",
+                                onValueChange = { onConfigChange(config.copy(gyroSensitivityPercent = it)) }
+                            )
+                        }
 
                         Surface(
                             shape = RoundedCornerShape(18.dp),
@@ -5412,12 +5832,48 @@ private fun CleanSettingsViewport(
 
                     SettingsSubCategory.GAMEPAD -> {
                         ZalithSettingDropdownCard(
-                            title = "Controller & Gamepad Routing",
-                            description = "Configure hardware controller mode and button mapping behavior",
+                            title = "Controller & Gamepad Routing (v0.7.5)",
+                            description = "Configure USB & Bluetooth gamepad input host (Xbox, DualSense, Switch Pro)",
                             selectedItem = config.inputHost,
-                            options = listOf(HorizonInputHost.AUTO, HorizonInputHost.CONTROLLER, HorizonInputHost.KEYBOARD_MOUSE),
+                            options = listOf(HorizonInputHost.AUTO, HorizonInputHost.CONTROLLER, HorizonInputHost.KEYBOARD_MOUSE, HorizonInputHost.TOUCH),
                             itemLabel = { it.label },
                             onSelect = { onConfigChange(config.copy(inputHost = it)) }
+                        )
+
+                        ZalithSettingDropdownCard(
+                            title = "Controller Menu & Inventory Navigation (v0.7.5)",
+                            description = "Choose Focus highlight (D-pad/Stick step) or Virtual Pointer cursor in menus (horizon-controller.txt)",
+                            selectedItem = config.controllerNavMode,
+                            options = HorizonControllerNavMode.entries,
+                            itemLabel = { it.label },
+                            onSelect = { onConfigChange(config.copy(controllerNavMode = it)) }
+                        )
+
+                        ZalithSettingToggleCard(
+                            title = "Controller Vibration & Rumble (v0.7.4+)",
+                            description = "Enable controller haptics and rumble feedback when supported by Android driver",
+                            checked = config.controllerVibration,
+                            onCheckedChange = { onConfigChange(config.copy(controllerVibration = it)) }
+                        )
+
+                        ZalithSettingSliderCard(
+                            title = "Controller Look Sensitivity",
+                            description = "Right-stick camera yaw/pitch rotation speed (synced with horizon-controller.txt)",
+                            value = config.controllerSensitivityPercent,
+                            valueRange = 20..200,
+                            step = 10,
+                            valueSuffix = "%",
+                            onValueChange = { onConfigChange(config.copy(controllerSensitivityPercent = it)) }
+                        )
+
+                        ZalithSettingSliderCard(
+                            title = "Analog Stick Radial Deadzone",
+                            description = "Prevent stick drift on left and right thumbsticks (synced with horizon-controller.txt)",
+                            value = config.controllerDeadzonePercent,
+                            valueRange = 5..40,
+                            step = 5,
+                            valueSuffix = "%",
+                            onValueChange = { onConfigChange(config.copy(controllerDeadzonePercent = it)) }
                         )
 
                         ZalithSettingToggleCard(
@@ -5431,11 +5887,13 @@ private fun CleanSettingsViewport(
                     SettingsSubCategory.LAUNCHER -> {
                         ZalithSettingDropdownCard(
                             title = "Theme Palette",
-                            description = "Choose the color scheme used across HorizonZ Launcher",
+                            description = "Choose the color scheme used across HorizonZ Launcher (applies immediately)",
                             selectedItem = config.themePalette,
                             options = ZalithThemePalette.entries,
                             itemLabel = { it.label },
-                            onSelect = { onConfigChange(config.copy(themePalette = it)) }
+                            onSelect = {
+                                onConfigChange(config.copy(themePalette = it, useDynamicColor = false))
+                            }
                         )
 
                         ZalithSettingToggleCard(
@@ -5459,6 +5917,13 @@ private fun CleanSettingsViewport(
                             onCheckedChange = { onConfigChange(config.copy(recordPerformance = it)) }
                         )
 
+                        ZalithSettingToggleCard(
+                            title = "Detailed GPU Stage Profiling (p50/p95/p99)",
+                            description = "Include rolling GPU preparation, upload, rendering, and post-processing timings",
+                            checked = config.gpuStageProfiling,
+                            onCheckedChange = { onConfigChange(config.copy(gpuStageProfiling = it)) }
+                        )
+
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = CardSlateBg,
@@ -5468,12 +5933,12 @@ private fun CleanSettingsViewport(
                                 modifier = Modifier.padding(18.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Quick Server, Proxy & Diagnostics", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                Text("Quick Server (DNS/SRV v0.7.5), Proxy & Diagnostics", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                     OutlinedTextField(
                                         value = config.defaultServer,
                                         onValueChange = { onConfigChange(config.copy(defaultServer = it)) },
-                                        label = { Text("Quick-Join Server (ip:port)", fontSize = 11.sp) },
+                                        label = { Text("Quick-Join Server (domain / ip:port)", fontSize = 11.sp) },
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
                                     )
