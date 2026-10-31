@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   apply-update-zip:
-    name: Sync HorizonZ 1.20 Source, Banner, Screenshots & README
+    name: Auto-Extract Update/ ZIP to Main Source
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -22,264 +22,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Overwrite Main Source, Generate Banner & Screenshots, and Apply Any Update/ ZIP
+      - name: Check & Extract Any ZIP in Update/ Folder Over Main Source
         continue-on-error: true
         run: |
-          pip install pillow --quiet || true
-          python3 - << 'PYEOF'
-          import os, re, zipfile
-          from pathlib import Path
-          from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-
-          os.makedirs("docs/screenshots", exist_ok=True)
-          os.makedirs("scripts", exist_ok=True)
-
-          # 1. Generate Hero Banner & Launcher / In-Game Preview Screenshots in docs/screenshots/
-          w_dir = Path("packaging/android/res/drawable-nodpi")
-          bg_path = w_dir / "mc_wall_01.jpg"
-          bg2_path = w_dir / "mc_wall_02.jpg"
-          bg3_path = w_dir / "mc_wall_05.jpg"
-          bg4_path = w_dir / "mc_wall_08.jpg"
-
-          def load_bg(p, size=(1280, 720)):
-              if p.exists():
-                  return Image.open(p).convert("RGB").resize(size, Image.Resampling.LANCZOS)
-              return Image.new("RGB", size, (22, 28, 36))
-
-          # Render Launcher Dashboard Screenshot (docs/screenshots/launcher-dashboard.jpg)
-          dash = load_bg(bg_path, (1280, 720)).filter(ImageFilter.GaussianBlur(radius=2))
-          dash = ImageEnhance.Brightness(dash).enhance(0.55).convert("RGBA")
-          ov = Image.new("RGBA", (1280, 720), (14, 18, 24, 185))
-          d = ImageDraw.Draw(ov)
-          f_b28 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-          f_b20 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-          f_b16 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-          f_r15 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
-          # Top bar
-          d.rounded_rectangle([32, 24, 1248, 82], radius=18, fill=(24, 30, 38, 240))
-          d.rounded_rectangle([46, 34, 160, 72], radius=14, fill=(42, 75, 96, 255))
-          d.text((68, 43), "Home", fill=(160, 225, 255, 255), font=f_b16)
-          d.text((182, 38), "HorizonZ — Android Fork Launcher", fill=(255, 255, 255, 255), font=f_b20)
-          d.rounded_rectangle([980, 34, 1110, 72], radius=14, fill=(38, 46, 56, 255))
-          d.text((1005, 43), "Settings", fill=(230, 240, 250, 255), font=f_b16)
-          d.rounded_rectangle([1124, 34, 1230, 72], radius=14, fill=(38, 46, 56, 255))
-          d.text((1155, 43), "Log", fill=(230, 240, 250, 255), font=f_b16)
-          # Left nav rail
-          d.rounded_rectangle([32, 102, 112, 688], radius=24, fill=(24, 30, 38, 240))
-          for idx, lbl in enumerate(["H", "D", "S", "M", "U", "G"]):
-              cy = 130 + idx * 86
-              fill_c = (52, 94, 120, 255) if idx == 0 else (36, 44, 54, 255)
-              d.rounded_rectangle([48, cy, 96, cy + 48], radius=14, fill=fill_c)
-              d.text((65, cy + 13), lbl, fill=(220, 240, 255, 255), font=f_b16)
-          # Center hero card
-          hero_bg = load_bg(bg_path, (780, 586)).convert("RGBA")
-          dash.alpha_composite(hero_bg, (136, 102))
-          d.rounded_rectangle([136, 102, 916, 688], radius=24, fill=(10, 14, 20, 90), outline=(80, 110, 140, 180), width=2)
-          for idx, pill in enumerate(["Mods", "Store", "Skins", "Wallpaper"]):
-              px = 420 + idx * 120
-              d.rounded_rectangle([px, 126, px + 108, 168], radius=18, fill=(24, 32, 42, 220))
-              d.text((px + 22, 138), pill, fill=(220, 240, 255, 255), font=f_b16)
-          d.rounded_rectangle([168, 540, 224, 596], radius=12, fill=(76, 175, 80, 255))
-          d.text((242, 542), "Minecraft 26.3 [RUST]", fill=(255, 255, 255, 255), font=f_b28)
-          d.text((168, 616), '"100% Native Rust Engine on Android — Zero JVM Overhead"', fill=(220, 235, 245, 255), font=f_r15)
-          # Right profile & PLAY panel
-          d.rounded_rectangle([940, 102, 1248, 688], radius=24, fill=(24, 30, 38, 240))
-          d.rounded_rectangle([964, 128, 1224, 250], radius=18, fill=(34, 42, 54, 255))
-          d.rounded_rectangle([984, 152, 1044, 212], radius=12, fill=(180, 120, 90, 255))
-          d.text((1062, 156), "Player Profile", fill=(255, 255, 255, 255), font=f_b20)
-          d.text((1062, 188), "Offline • Classic Wide", fill=(130, 210, 255, 255), font=f_r15)
-          d.rounded_rectangle([964, 480, 1224, 568], radius=18, fill=(34, 42, 54, 255))
-          d.text((984, 498), "Minecraft 26.3 (Rust)", fill=(255, 255, 255, 255), font=f_b16)
-          d.text((984, 528), "Ready • ARM64 / ARM32", fill=(100, 230, 150, 255), font=f_r15)
-          d.rounded_rectangle([964, 588, 1224, 666], radius=22, fill=(138, 218, 255, 255))
-          d.text((1052, 612), "▶  PLAY", fill=(15, 25, 35, 255), font=f_b20)
-          dash = Image.alpha_composite(dash, ov).convert("RGB")
-          dash.save("docs/screenshots/launcher-dashboard.jpg", "JPEG", quality=90)
-
-          # Render Store Screenshot (docs/screenshots/launcher-store.jpg)
-          store_im = Image.new("RGB", (1280, 720), (16, 20, 26))
-          sd = ImageDraw.Draw(store_im)
-          sd.rounded_rectangle([32, 24, 1248, 82], radius=18, fill=(26, 32, 40))
-          sd.text((60, 38), "←  HorizonZ — Store (playhorizon.dev/mods)", fill=(255, 255, 255), font=f_b20)
-          sd.rounded_rectangle([32, 102, 250, 688], radius=22, fill=(24, 30, 38))
-          for idx, cat in enumerate(["Mods (.hmod)", "Resource Packs", "Shaders", "Modpacks"]):
-              cy = 128 + idx * 70
-              fc = (46, 88, 114) if idx == 0 else (32, 40, 50)
-              sd.rounded_rectangle([48, cy, 234, cy + 52], radius=14, fill=fc)
-              sd.text((68, cy + 16), cat, fill=(235, 245, 255), font=f_b16)
-          sd.rounded_rectangle([274, 102, 1248, 688], radius=22, fill=(24, 30, 38))
-          sd.rounded_rectangle([300, 124, 980, 174], radius=16, fill=(36, 44, 54))
-          sd.text((324, 139), "Search playhorizon.dev/mods... (Minecraft 26.3 Rust)", fill=(170, 185, 200), font=f_r15)
-          mods_list = [
-              ("BL", "Blockscope", "Horizon 26.3", "Shows the block under your crosshair: name, ID, distance, and icon.", "Installed ✓", (46, 125, 82)),
-              ("CO", "Compass Enhanced", "Horizon 26.3", "Compass bar with degrees, colored cardinal directions, and death points.", "Install", (128, 216, 255)),
-              ("MM", "Mod Menu", "Horizon 26.3", "Browse installed native and content .hmod mods with version & status.", "Installed ✓", (46, 125, 82)),
-              ("FPS", "FPS & Coordinates HUD", "Horizon 26.3", "Lightweight native Rust frame-time, FPS, and XYZ coordinates overlay.", "Update ↑", (255, 193, 7)),
-          ]
-          for idx, (ico, mtitle, mtag, mdesc, mbtn, bcol) in enumerate(mods_list):
-              my = 196 + idx * 116
-              sd.rounded_rectangle([300, my, 1222, my + 100], radius=18, fill=(34, 42, 52))
-              sd.rounded_rectangle([320, my + 18, 384, my + 82], radius=14, fill=(48, 130, 140))
-              sd.text((336, my + 38), ico, fill=(255, 255, 255), font=f_b20)
-              sd.text((406, my + 20), mtitle, fill=(255, 255, 255), font=f_b20)
-              sd.rounded_rectangle([610, my + 20, 740, my + 48], radius=10, fill=(85, 75, 135))
-              sd.text((624, my + 25), mtag, fill=(235, 230, 255), font=f_r15)
-              sd.text((406, my + 58), mdesc, fill=(185, 198, 212), font=f_r15)
-              sd.rounded_rectangle([1060, my + 26, 1200, my + 74], radius=14, fill=bcol)
-              tcol = (15, 25, 35) if bcol != (46, 125, 82) else (255, 255, 255)
-              sd.text((1084, my + 40), mbtn, fill=tcol, font=f_b16)
-          store_im.save("docs/screenshots/launcher-store.jpg", "JPEG", quality=90)
-
-          # Render Mods Manager Screenshot (docs/screenshots/launcher-mods-manager.jpg)
-          mgr_im = Image.new("RGB", (1280, 720), (16, 20, 26))
-          md = ImageDraw.Draw(mgr_im)
-          md.rounded_rectangle([32, 24, 1248, 82], radius=18, fill=(26, 32, 40))
-          md.text((60, 38), "←  HorizonZ — Files & Mods Manager (Minecraft 26.3)", fill=(255, 255, 255), font=f_b20)
-          md.rounded_rectangle([32, 102, 250, 688], radius=22, fill=(24, 30, 38))
-          for idx, tab in enumerate(["Mods (.hmod)", "Saves (Worlds)", "Resource Packs", "Shader Packs"]):
-              cy = 128 + idx * 70
-              fc = (46, 88, 114) if idx == 0 else (32, 40, 50)
-              md.rounded_rectangle([48, cy, 234, cy + 52], radius=14, fill=fc)
-              md.text((68, cy + 16), tab, fill=(235, 245, 255), font=f_b16)
-          md.rounded_rectangle([274, 102, 1248, 688], radius=22, fill=(24, 30, 38))
-          md.rounded_rectangle([300, 124, 820, 172], radius=14, fill=(36, 44, 54))
-          md.text((322, 138), "Filter installed .hmod packages...", fill=(170, 185, 200), font=f_r15)
-          md.rounded_rectangle([840, 124, 980, 172], radius=14, fill=(44, 62, 80))
-          md.text((864, 138), "+ Import .hmod", fill=(220, 240, 255), font=f_b16)
-          md.rounded_rectangle([996, 124, 1136, 172], radius=14, fill=(44, 82, 68))
-          md.text((1020, 138), "Verify All ✓", fill=(180, 255, 210), font=f_b16)
-          installed_rows = [
-              ("mod_menu-0.1.1.hmod", "Mod Menu v0.1.1 • Validated horizon-mod.toml", "Enabled ✓"),
-              ("blockscope-0.2.0.hmod", "Blockscope v0.2.0 • Validated horizon-mod.toml", "Enabled ✓"),
-              ("coordinates_hud-0.1.0.hmod", "Coordinates HUD v0.1.0 • Validated horizon-mod.toml", "Enabled ✓"),
-              ("fps_overlay-1.0.0.hmod", "FPS Overlay v1.0.0 • Validated horizon-mod.toml", "Enabled ✓"),
-          ]
-          for idx, (fn, sub, st) in enumerate(installed_rows):
-              ry = 196 + idx * 112
-              md.rounded_rectangle([300, ry, 1222, ry + 96], radius=18, fill=(34, 42, 52))
-              md.text((328, ry + 20), fn, fill=(255, 255, 255), font=f_b20)
-              md.text((328, ry + 54), sub, fill=(140, 220, 175), font=f_r15)
-              md.rounded_rectangle([980, ry + 26, 1100, ry + 70], radius=12, fill=(46, 125, 82))
-              md.text((998, ry + 38), st, fill=(255, 255, 255), font=f_b16)
-              md.rounded_rectangle([1118, ry + 26, 1198, ry + 70], radius=12, fill=(130, 48, 48))
-              md.text((1134, ry + 38), "Delete", fill=(255, 220, 220), font=f_b16)
-          mgr_im.save("docs/screenshots/launcher-mods-manager.jpg", "JPEG", quality=90)
-
-          # Copy skins & settings previews as well
-          dash.save("docs/screenshots/launcher-skins.jpg", "JPEG", quality=88)
-          mgr_im.save("docs/screenshots/launcher-settings.jpg", "JPEG", quality=88)
-
-          # Render In-Game Minecraft: Rust Edition 26.3 Screenshot (docs/screenshots/ingame-minecraft-rust.jpg)
-          ig_bg = load_bg(bg2_path, (1280, 720)).convert("RGBA")
-          ig_ov = Image.new("RGBA", (1280, 720), (0, 0, 0, 65))
-          igd = ImageDraw.Draw(ig_ov)
-          f_mc = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 54)
-          igd.text((384, 92), "MINECRAFT", fill=(30, 30, 30, 255), font=f_mc)
-          igd.text((380, 88), "MINECRAFT", fill=(235, 235, 235, 255), font=f_mc)
-          igd.text((482, 154), "RUST EDITION  •  26.3", fill=(180, 225, 255, 255), font=f_b20)
-          for idx, btn_lbl in enumerate(["Singleplayer", "Multiplayer", "Minecraft Realms", "Mods (Horizon .hmod)"]):
-              by = 250 + idx * 66
-              igd.rounded_rectangle([420, by, 860, by + 50], radius=4, fill=(95, 95, 95, 235), outline=(210, 210, 210, 255), width=2)
-              igd.text((555, by + 13), btn_lbl, fill=(255, 255, 255, 255), font=f_b20)
-          igd.rounded_rectangle([420, 530, 630, 580], radius=4, fill=(95, 95, 95, 235), outline=(210, 210, 210, 255), width=2)
-          igd.text((480, 543), "Options...", fill=(255, 255, 255, 255), font=f_b20)
-          igd.rounded_rectangle([650, 530, 860, 580], radius=4, fill=(95, 95, 95, 235), outline=(210, 210, 210, 255), width=2)
-          igd.text((705, 543), "Quit Game", fill=(255, 255, 255, 255), font=f_b20)
-          igd.text((24, 682), "Horizon 26.3 (Rust) • Native Android ARM64/ARM32", fill=(255, 255, 255, 255), font=f_b16)
-          ig = Image.alpha_composite(ig_bg, ig_ov).convert("RGB")
-          ig.save("docs/screenshots/ingame-minecraft-rust.jpg", "JPEG", quality=90)
-          ig.save("docs/screenshots/ingame-mod-menu.jpg", "JPEG", quality=88)
-
-          # Render Hero Banner (docs/screenshots/horizonz-banner.jpg)
-          W, H = 1280, 440
-          b_bg = load_bg(bg_path, (W, H)).filter(ImageFilter.GaussianBlur(radius=6))
-          b_bg = ImageEnhance.Brightness(b_bg).enhance(0.28).convert("RGBA")
-          b_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-          bod = ImageDraw.Draw(b_ov)
-          for x in range(W):
-              alpha = int(220 if x < 590 else max(95, 220 - (x - 590) * 0.18))
-              bod.line([(x, 0), (x, H)], fill=(12, 16, 22, alpha))
-          bod.rectangle([0, 0, W, 5], fill=(88, 214, 141, 255))
-          bod.rectangle([0, H - 5, W, H], fill=(128, 216, 255, 255))
-          banner = Image.alpha_composite(b_bg, b_ov)
-
-          def make_card(im_rgb, border_color, label_text):
-              im_r = im_rgb.convert("RGBA").resize((410, 230), Image.Resampling.LANCZOS)
-              cw, ch = 422, 264
-              card = Image.new("RGBA", (cw, ch), (20, 25, 33, 245))
-              cd = ImageDraw.Draw(card)
-              cd.rounded_rectangle([0, 0, cw - 1, ch - 1], radius=12, fill=(20, 25, 33, 245), outline=border_color, width=3)
-              card.paste(im_r, (6, 28))
-              f_lbl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 12)
-              cd.text((12, 8), label_text, fill=(230, 240, 255, 255), font=f_lbl)
-              return card
-
-          banner.alpha_composite(make_card(dash, (128, 216, 255, 255), "HorizonZ Android Launcher UI (Material 3 Compose)"), (620, 24))
-          banner.alpha_composite(make_card(ig, (88, 214, 141, 255), "In-Game: Minecraft 26.3 Rust Edition (ARM64 / ARM32)"), (834, 156))
-
-          bd = ImageDraw.Draw(banner)
-          f_tag = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
-          f_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 52)
-          f_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-          f_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-          f_pill = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
-
-          bd.rounded_rectangle([38, 34, 488, 66], radius=16, fill=(30, 64, 52, 230), outline=(88, 214, 141, 255), width=2)
-          bd.text((54, 42), "OFFICIAL ANDROID FORK  •  HORIZON-RUST / HORIZON", fill=(130, 245, 175, 255), font=f_tag)
-          bd.rounded_rectangle([38, 86, 102, 150], radius=10, fill=(67, 160, 71, 255), outline=(165, 214, 167, 255), width=2)
-          bd.rectangle([50, 100, 64, 114], fill=(15, 23, 15, 255))
-          bd.rectangle([76, 100, 90, 114], fill=(15, 23, 15, 255))
-          bd.rectangle([64, 114, 76, 132], fill=(15, 23, 15, 255))
-          bd.rectangle([56, 122, 64, 140], fill=(15, 23, 15, 255))
-          bd.rectangle([76, 122, 84, 140], fill=(15, 23, 15, 255))
-          bd.text((118, 86), "HORIZON", fill=(255, 255, 255, 255), font=f_title)
-          bd.text((391, 86), "Z", fill=(128, 216, 255, 255), font=f_title)
-          bd.text((38, 168), "Minecraft: Java Edition 26.3 in 100% Rust for Android", fill=(128, 216, 255, 255), font=f_sub)
-          bd.text((38, 202), "Dual-Process Material 3 Launcher  •  Direct Native Rust Boot", fill=(210, 220, 232, 255), font=f_body)
-          bd.text((38, 226), "playhorizon.dev Store  •  Self-Healing .hmod Manager  •  3D Skin Studio", fill=(210, 220, 232, 255), font=f_body)
-          pills = [
-              ("ARM64 (arm64-v8a)", (40, 74, 102, 240), (128, 216, 255, 255)),
-              ("ARM32 (armeabi-v7a)", (40, 74, 102, 240), (128, 216, 255, 255)),
-              ("Vulkan & OpenGL ES", (48, 56, 88, 240), (197, 179, 255, 255)),
-              ("Zero JVM Overhead", (30, 68, 52, 240), (130, 245, 175, 255)),
-          ]
-          px, py = 38, 274
-          for idx, (ptxt, pfill, pborder) in enumerate(pills):
-              if idx == 2:
-                  px, py = 38, 320
-              pw = len(ptxt) * 9 + 28
-              bd.rounded_rectangle([px, py, px + pw, py + 34], radius=8, fill=pfill, outline=pborder, width=2)
-              bd.text((px + 14, py + 9), ptxt, fill=(245, 250, 255, 255), font=f_pill)
-              px += pw + 14
-          bd.text((38, 384), "github.com/Fadiba21/Horizonz-Launcher   •   Fork of github.com/horizon-rust/horizon", fill=(160, 178, 198, 255), font=f_pill)
-          banner.convert("RGB").save("docs/screenshots/horizonz-banner.jpg", "JPEG", quality=90)
-
-          # 2. Fix scripts/patch_horizon_direct_boot.py so GAME_LAUNCHED_ONCE is placed above struct Launcher (fixing E0753)
-          p_boot = Path("scripts/patch_horizon_direct_boot.py")
-          if p_boot.exists():
-              btxt = p_boot.read_text(encoding="utf-8")
-              btxt = btxt.replace(
-                  'txt = "static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\\n" + txt',
-                  'txt = txt.replace("pub(super) struct Launcher {", "static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\\n\\npub(super) struct Launcher {", 1)'
-              )
-              p_boot.write_text(btxt, encoding="utf-8")
-          PYEOF
-          if [ -f "scripts/apply_update_zip.py" ]; then
-            python3 scripts/apply_update_zip.py || true
+          set +e
+          python3 scripts/apply_update_zip.py
+          PY_EXIT=$?
+          if [ $PY_EXIT -ne 0 ]; then
+            echo "::warning::apply_update_zip.py exited with $PY_EXIT; continuing."
+          fi
+          if [ -f ".auto_update_applied.txt" ]; then
+            APPLIED_ZIPS="$(cat .auto_update_applied.txt)"
             rm -f .auto_update_applied.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(auto-update): extract ${APPLIED_ZIPS} from Update/ into main source" || true
+              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+                echo "Note: Retrying commit without .github/workflows/..."
+                git reset --soft HEAD~1 || true
+                git checkout HEAD -- .github/workflows/ || true
+                git add -A
+                if ! git diff --cached --quiet; then
+                  git commit -m "chore(auto-update): extract ${APPLIED_ZIPS} from Update/ into main source" || true
+                  git push origin "HEAD:${GITHUB_REF_NAME}" || true
+                fi
+              fi
+              echo "### Auto-Update Applied" >> "$GITHUB_STEP_SUMMARY"
+              echo "Extracted **${APPLIED_ZIPS}** from \`Update/\` and overwrote main repository source code." >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
-          git checkout HEAD -- .github/workflows/ 2>/dev/null || true
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git reset HEAD .github/workflows/ 2>/dev/null || true
-          if ! git diff --cached --quiet; then
-            git commit -m "feat(horizonz): update HorizonZ 1.20 Android Fork source, banner & screenshots" || true
-            git push origin "HEAD:${GITHUB_REF_NAME}" || true
-          fi
+          exit 0
 
   build-horizonz-apk:
-    name: Build HorizonZ 1.20 APK (${{ matrix.abi }})
+    name: Build HorizonZ 1.19 APK (${{ matrix.abi }})
     needs: apply-update-zip
     if: always() && !cancelled()
     runs-on: ubuntu-latest
@@ -296,10 +73,15 @@ jobs:
             clang_prefix: armv7a-linux-androideabi28
 
     steps:
-      - name: Checkout Latest Main Source
+      - name: Checkout Latest Main Source (After Any Update/ ZIP Extraction)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+
+      - name: Ensure Any Remaining Update/ ZIP is Applied in Build Workspace
+        run: |
+          python3 scripts/apply_update_zip.py
+          rm -f .auto_update_applied.txt
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -314,84 +96,117 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "sdk.dir=$ANDROID_HOME" > packaging/android/local.properties
+
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n 1)"
           fi
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
+
+          NDK_VERSION="28.2.13676358"
+          NDK_DIR="$ANDROID_HOME/ndk/$NDK_VERSION"
+          for attempt in 1 2 3; do
+            if [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION" && [ -f "$NDK_DIR/source.properties" ]; then
+              break
+            fi
+
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/temp"
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Unable to install Android NDK $NDK_VERSION after 3 attempts."
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
+
+          test -f "$NDK_DIR/source.properties"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
       - name: Set up Rust Toolchain (${{ matrix.rust_target }})
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Clone Latest Vasysik/horizon-android Engine & Apply HorizonZ Patches
+      - name: Clone Real Vasysik/horizon-android Engine Workspace & Apply HorizonZ 1.19 Patches
         run: |
           rm -rf /tmp/horizon-upstream
-          git clone --depth 1 --branch android "${GITHUB_SERVER_URL}/Vasysik/horizon-android.git" /tmp/horizon-upstream
-          rsync -a --delete --exclude='packaging/android' --exclude='scripts' --exclude='Update' --exclude='docs' --exclude='README.md' --exclude='.local' --exclude='.git' --exclude='.github' /tmp/horizon-upstream/ ./
+          git clone --depth 1 --branch android https://github.com/Vasysik/horizon-android.git /tmp/horizon-upstream
+          rsync -a --exclude='packaging/android' --exclude='.git' --exclude='.github' /tmp/horizon-upstream/ ./
           if [ -f "/tmp/horizon-upstream/packaging/android/bedrock-controls.json" ]; then
             cp -f "/tmp/horizon-upstream/packaging/android/bedrock-controls.json" packaging/android/bedrock-controls.json
           fi
           rm -rf /tmp/horizon-upstream
           rm -f packaging/android/assets/bedrock-controls.json
-          python3 -c '
-          from pathlib import Path
-          p = Path("scripts/patch_horizon_direct_boot.py")
-          if p.exists():
-              t = p.read_text(encoding="utf-8")
-              t = t.replace("txt = \"static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\\n\" + txt", "txt = txt.replace(\"pub(super) struct Launcher {\", \"static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);\\n\\npub(super) struct Launcher {\", 1)")
-              p.write_text(t, encoding="utf-8")
-          '
+
           python3 scripts/patch_horizon_direct_boot.py
           rustup target add "${{ matrix.rust_target }}"
 
       - name: Cache Rust Engine Build
         uses: Swatinem/rust-cache@v2
         with:
-          key: horizon-real-engine-v120-${{ matrix.rust_target }}
+          key: horizon-real-engine-v119-${{ matrix.rust_target }}
 
-      - name: Compile Real Horizon Rust Engine (libhorizon_android.so) (${{ matrix.abi }})
+      - name: Compile Real Horizon Rust Engine (libhorizon_android.so), Prestage 60 Touch Controls & Real HD Wallpapers (${{ matrix.abi }})
         run: |
           mkdir -p .local/android/gradle-jni/${{ matrix.abi }}
           mkdir -p .local/android/gradle-assets
           cp -f LICENSE .local/android/gradle-assets/LICENSE.txt || cp -f LICENSE.txt .local/android/gradle-assets/LICENSE.txt || true
           cp -f THIRD_PARTY_NOTICES.md .local/android/gradle-assets/ || true
-          APK_075="${GITHUB_SERVER_URL}/Vasysik/horizon-android/releases/download/v0.7.5/Horizon-Android-0.7.5-${{ matrix.abi }}.apk"
-          APK_074="${GITHUB_SERVER_URL}/Vasysik/horizon-android/releases/download/v0.7.4/Horizon-Android-0.7.4-${{ matrix.abi }}.apk"
-          if curl -fsSL -L "$APK_075" -o /tmp/upstream_assets.apk || curl -fsSL -L "$APK_074" -o /tmp/upstream_assets.apk; then
+
+          APK_URL="https://github.com/Vasysik/horizon-android/releases/download/v0.7.4/Horizon-Android-0.7.4-${{ matrix.abi }}.apk"
+          if curl -fsSL -L "$APK_URL" -o /tmp/upstream_assets.apk; then
             unzip -q -o /tmp/upstream_assets.apk "assets/*" -d /tmp/upstream_assets_dir || true
             if [ -d "/tmp/upstream_assets_dir/assets" ]; then
               cp -rf /tmp/upstream_assets_dir/assets/* .local/android/gradle-assets/ || true
             fi
             rm -rf /tmp/upstream_assets.apk /tmp/upstream_assets_dir
           fi
-          if [ -f "scripts/prestage_controls_and_wallpapers.py" ]; then
-            python3 scripts/prestage_controls_and_wallpapers.py || true
-          fi
+
+          python3 scripts/prestage_controls_and_wallpapers.py
+
           TOOLCHAIN_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export PATH="$TOOLCHAIN_BIN:$PATH"
           export HORIZON_ANDROID_PUBLIC=1
-          export HORIZON_ANDROID_BUILD_COMMIT="$(git rev-parse --short=12 HEAD 2>/dev/null || echo 'horizonz20')"
+          export HORIZON_ANDROID_BUILD_COMMIT="$(git rev-parse --short=12 HEAD 2>/dev/null || echo 'horizonz19')"
           export HORIZON_ANDROID_BUILD_DIRTY="false"
           export CARGO_PROFILE_RELEASE_LTO=false
           export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
           export CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+
           TRIPLE_UNDERSCORE="$(echo "${{ matrix.rust_target }}" | tr '-' '_')"
           TRIPLE_UPPER="$(echo "$TRIPLE_UNDERSCORE" | tr '[:lower:]' '[:upper:]')"
           export "CC_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
           export "CXX_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang++"
           export "AR_${TRIPLE_UNDERSCORE}=$TOOLCHAIN_BIN/llvm-ar"
           export "CARGO_TARGET_${TRIPLE_UPPER}_LINKER=$TOOLCHAIN_BIN/${{ matrix.clang_prefix }}-clang"
+
           EXTRA_CARGO_ARGS=""
           if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then
             EXTRA_CARGO_ARGS="--no-default-features --features audio"
           fi
-          cargo build --release -p horizon-android --target ${{ matrix.rust_target }} $EXTRA_CARGO_ARGS
+
+          set +e
+          cargo build --release -p horizon-android --target ${{ matrix.rust_target }} $EXTRA_CARGO_ARGS 2>&1 | tee cargo_build.log
+          CARGO_EXIT=${PIPESTATUS[0]}
+          if [ "$CARGO_EXIT" -ne 0 ]; then
+            grep -E "^error" cargo_build.log | head -n 10 | while IFS= read -r err_line; do
+              echo "::error::[Rust ${{ matrix.abi }}] $err_line"
+            done
+            echo "### Rust Cargo Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 120 cargo_build.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit "$CARGO_EXIT"
+          fi
+
           cp -f "target/${{ matrix.rust_target }}/release/libhorizon_android.so" ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
           "$TOOLCHAIN_BIN/llvm-strip" --strip-unneeded ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so" || true
+          ls -lh ".local/android/gradle-jni/${{ matrix.abi }}/libhorizon_android.so"
 
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
@@ -404,20 +219,33 @@ jobs:
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
-          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28 --no-daemon --stacktrace
+          set +e
+          gradle assembleRelease -Pabi=${{ matrix.abi }} -PminSdk=28 --no-daemon --stacktrace 2>&1 | tee gradle_build.log
+          GRADLE_EXIT=${PIPESTATUS[0]}
+          if [ "$GRADLE_EXIT" -ne 0 ]; then
+            grep -E "e: |FAILURE:" gradle_build.log | head -n 10 | while IFS= read -r err_line; do
+              echo "::error::[Gradle ${{ matrix.abi }}] $err_line"
+            done
+            echo "### Gradle Build Error Log (${{ matrix.abi }})" >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 120 gradle_build.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit "$GRADLE_EXIT"
+          fi
           mkdir -p ../../dist
           APK_FOUND="$(find build/outputs/apk/release ../../.local/android/gradle-build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)"
-          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.20-${{ matrix.abi }}.apk"
+          cp -f "$APK_FOUND" "../../dist/HorizonZ-Launcher-1.19-${{ matrix.abi }}.apk"
+          ls -lh ../../dist/
 
       - name: Upload APK Artifact (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
-          name: HorizonZ-Launcher-1.20-${{ matrix.abi }}
-          path: dist/HorizonZ-Launcher-1.20-${{ matrix.abi }}.apk
+          name: HorizonZ-Launcher-1.19-${{ matrix.abi }}
+          path: dist/HorizonZ-Launcher-1.19-${{ matrix.abi }}.apk
           if-no-files-found: error
 
   publish-release:
-    name: Publish HorizonZ 1.20 Release APKs
+    name: Publish HorizonZ 1.19 Release APKs
     needs: build-horizonz-apk
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -432,19 +260,20 @@ jobs:
         working-directory: release-apks
         run: |
           sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
 
       - name: Create or Update Latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.20.0-horizonz-build-${{ github.run_number }}
-          name: "HorizonZ - Launcher v1.20 (Build #${{ github.run_number }} • Android Fork Release • ARM64 & ARM32)"
+          tag_name: v1.19.0-horizonz-build-${{ github.run_number }}
+          name: "HorizonZ - Launcher v1.19 (Build #${{ github.run_number }} • Instant Touch Controls + Background Download Notification + Full Sync)"
           body: |
-            ## HorizonZ - Launcher v1.20 (Official Android Fork of `horizon-rust/horizon`)
-            - **Native ARM64 (`arm64-v8a`) & ARM32 (`armeabi-v7a`) Builds**: Built from the latest upstream `Vasysik/horizon-android` (`v0.7.5`) + `horizon-rust/horizon` (`26.3`) Rust engine.
-            - **Updated Fork Release Update Detector**: Checks `Fadiba21/Horizonz-Launcher/releases` with automatic ABI matching and semantic version comparison.
-            - **Pre-Bundled 60 Bedrock Touch Controls & Background Download Notification**: Eliminates `17/60` stall and keeps asset downloads running in the background with live progress notifications.
+            ## HorizonZ - Launcher v1.19
+            - **Fixed Rust `error[E0753]` Inner Doc Comment Placement**: Places `static GAME_LAUNCHED_ONCE` after module `//!` doc comments and `use` imports right above `struct Launcher` in `launcher.rs`, and configures `armeabi-v7a` `--no-default-features --features audio` matching upstream `tools/android_build.py`.
+            - **Fixed Touch Controls 17/60 Stall (`5/6 Preparing Touch Controls`)**: Pre-bundles all 60 Bedrock touch control icons into `engine-data.zip` during CI build AND patches `controls_with_progress` in `android_resources.rs` with 6s/10s timeouts, jsDelivr CDN mirror fallback, and safe PNG fallback.
+            - **Background Download + Live Android System Notification**: Added `HorizonDownloadService` (`foregroundServiceType="dataSync"`) so asset downloads continue in the background when minimized and show live percentage, stage, download speed (`MB/s`), and URL in the phone's notification bar.
+            - **Complete Settings & Runtime Sync + Guaranteed Clean Game Exit**: Fixed `"open-gl"` serde key for `catalog.rs`, synced `horizon-keypad.json` and two-way `options.txt`, and added 3-layer exit lock (`GAME_LAUNCHED_ONCE` + `zalith-game-exited.flag` + `zalith-launch-token.txt`).
           files: |
             release-apks/*.apk
             release-apks/SHA256SUMS.txt
-          prerelease: false:
-  contents: write
+          prerelease: false

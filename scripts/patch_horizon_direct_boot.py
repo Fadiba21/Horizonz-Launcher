@@ -39,13 +39,30 @@ if launcher_rs.exists():
     new_struct = '''static GAME_LAUNCHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn sanitize_and_repair_horizon_mods(home: &std::path::Path) {
-    let d = home.join("horizon-mods"); let _ = std::fs::create_dir_all(&d);
-    let Ok(es) = std::fs::read_dir(&d) else { return; };
-    for en in es.flatten() {
-        let p = en.path(); if !p.is_file() { continue; }
-        if !p.file_name().and_then(|n| n.to_str()).unwrap_or("").ends_with(".hmod") { continue; }
-        let Ok(b) = std::fs::read(&p) else { continue; };
-        if b.len() <= 22 || b[0..4] != [0x50u8, 0x4Bu8, 0x03u8, 0x04u8] || !b.windows(16).any(|w| w == b"horizon-mod.toml") { let _ = std::fs::remove_file(&p); }
+    let mods_dir = home.join("horizon-mods");
+    let _ = std::fs::create_dir_all(&mods_dir);
+    let Ok(entries) = std::fs::read_dir(&mods_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(fname) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !fname.ends_with(".hmod") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let has_zip_magic = bytes.len() > 22 && bytes[0..4] == [0x50u8, 0x4Bu8, 0x03u8, 0x04u8];
+        let has_manifest_name = bytes.windows(16).any(|w| w == b"horizon-mod.toml");
+        if !has_zip_magic || !has_manifest_name {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 

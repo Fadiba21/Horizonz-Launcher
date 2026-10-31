@@ -1,36 +1,37 @@
-/.local/
+# Horizon & Rust build artifacts
 /target/
-**/__pycache__/
-*.py[cod]
-/.venv/
-# Downloaded/decompiled game content and private profiling artifacts.
-*.jar
-*.class
-*.jfr
-*.hprof
-/decompiled/
-/minecraft/
-/assets/
-/run/
-/logs/
-/dist/
-/mods/horizon/build/
-/saves/
-/backups/
-/tools/logs/
-.DS_Store
-# What the client writes to its working directory when run from the repo root.
-/options.txt
-/horizon.txt
-/horizon-graphics.txt
-/horizon-controller.txt
-/horizon-extras.txt
-/horizon-player.txt
-/servers.dat
-/screenshots/
-/.horizon-cache/
-/crash-reports/
-/debug/
+/.local/
+**/*.rs.bk
+Cargo.lock
 
-# Release-only compiled original exporter bundle.
-/exporters/
+# Android & Gradle build artifacts
+.gradle/
+build/
+dist/
+packaging/android/.gradle/
+packaging/android/build/
+packaging/android/app/build/
+local.properties
+packaging/android/local.properties
+*.iml
+.idea/
+*.keystore
+*.jks
+*.apk
+*.aab
+*.idsig
+
+# Never commit proprietary Mojang game assets
+/server.jar
+/client.jar
+/versions/
+/assets/
+/libraries/
+engine-data.zip
+bedrock-controls.zip
+
+# Always allow Update/ folder and any source .zip uploaded into Update/
+!Update/
+!Update/.gitkeep
+!Update/README.md
+!Update/*.zip

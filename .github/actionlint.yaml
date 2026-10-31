@@ -1,3 +1,0 @@
-self-hosted-runner:
-  # The Mac mini's runner (ludovics-mac-mini), which holds the maintainer's own Minecraft files.
-  labels: [horizon-game, ludovics-mac-mini]
