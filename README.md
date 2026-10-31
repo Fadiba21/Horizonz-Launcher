@@ -1,12 +1,13 @@
 <!-- HORIZONZ_README_PRESERVE -->
+<!-- HORIZONZ_README_LANGUAGE: en -->
 <p align="center">
-  <img src="packaging/android/res/drawable-nodpi/mc_wall_11.jpg" alt="Lanskap pixel HorizonZ dari wallpaper dashboard yang dibundel" width="100%">
+  <img src="docs/images/horizonz-gameplay-banner.jpg" alt="Authentic Minecraft in-game autumn forest and stone bridge, cropped from the HorizonZ Home screenshot" width="100%">
 </p>
 
 <h1 align="center">HorizonZ Launcher</h1>
-<p align="center"><strong>Minecraft Java Edition di Android — launcher Kotlin, runtime native Rust.</strong></p>
+<p align="center"><strong>Minecraft: Java Edition on Android — Kotlin launcher, native Rust runtime.</strong></p>
 <p align="center">
-  <a href="https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml"><img src="https://img.shields.io/badge/Build-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="Build GitHub Actions"></a>
+  <a href="https://github.com/Fadiba21/Horizonz-Launcher/actions/workflows/build-apk.yml"><img src="https://img.shields.io/badge/Build-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="Build with GitHub Actions"></a>
   <img src="https://img.shields.io/badge/Android-API%2028%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android API 28 or later">
   <img src="https://img.shields.io/badge/Kotlin%20UI%20%2B%20Rust%20Engine-243B53?style=for-the-badge" alt="Kotlin UI plus Rust engine">
 </p>
@@ -14,131 +15,158 @@
 <!-- HORIZONZ_VERSION_START -->
 <p align="center">
   <a href="https://github.com/Fadiba21/Horizonz-Launcher/releases/latest"><img src="https://img.shields.io/badge/Release-v1.19.0-52b788?style=for-the-badge&logo=android&logoColor=white" alt="Release v1.19.0"></a>
-  <strong>Source saat ini:</strong> <code>1.19.0-HorizonZ</code> · <strong>versionCode:</strong> <code>43</code> · <strong>minimum Android:</strong> API 28 · <strong>compile/target SDK:</strong> 35/35
+  <strong>Current source:</strong> <code>1.19.0-HorizonZ</code> · <strong>versionCode:</strong> <code>43</code> · <strong>Minimum Android:</strong> API 28 · <strong>Compile/target SDK:</strong> 35/35
 </p>
 <!-- HORIZONZ_VERSION_END -->
 
-> **Catatan visual:** hero art di atas memakai wallpaper pixel bawaan source Archive v1.19 (`mc_wall_11.jpg`). Ini adalah aset wallpaper dashboard, **bukan screenshot UI launcher**. Screenshot UI autentik belum tersedia pada source yang dipilih.
+> **Banner provenance:** this is a clean crop from the authentic Minecraft landscape shown in the supplied HorizonZ Home screenshot. It contains no generated or stock imagery; the complete original screenshot is included below.
 
-## 🧭 Isi README
+## 📘 Contents
 
-- [Apa itu HorizonZ](#-apa-itu-horizonz)
-- [Fitur utama](#-fitur-utama)
-- [Ringkasan perubahan terbaru](#-ringkasan-perubahan-terbaru)
-- [Cara kerja dan arsitektur](#-cara-kerja-dan-arsitektur)
-- [Spesifikasi teknis](#-spesifikasi-teknis)
-- [Build dan rilis](#-build-dan-rilis)
-- [Peta source](#-peta-source)
-- [Kebijakan update ZIP dan README](#-kebijakan-update-zip-dan-readme)
+- [About HorizonZ](#-about-horizonz)
+- [Features](#-features)
+- [Latest source update](#-latest-source-update)
+- [How it works](#-how-it-works)
+- [Technical specifications](#-technical-specifications)
+- [Build and downloads](#-build-and-downloads)
+- [Authentic launcher screenshots](#-authentic-launcher-screenshots)
+- [Source map](#-source-map)
+- [ZIP updates and README language](#-zip-updates-and-readme-language)
+- [License and attribution](#-license-and-attribution)
 
-## 🎮 Apa itu HorizonZ?
+## 🎮 About HorizonZ
 
-HorizonZ adalah launcher Android untuk menjalankan **Minecraft: Java Edition** melalui runtime native Horizon. Source v1.19 menggabungkan antarmuka Android berbasis Kotlin/Jetpack Compose dengan engine Rust yang dipaketkan sebagai library JNI. Aplikasi menyediakan dashboard, pengelolaan versi dan aset, katalog konten, file, akun/skin, log, serta pengaturan; proses game berjalan terpisah dari launcher.
+HorizonZ is an Android launcher for **Minecraft: Java Edition**, powered by the native Horizon runtime. Archive v1.19 combines a Kotlin/Jetpack Compose Android interface with a Rust engine packaged as a JNI library. The app provides a dashboard, game-version and asset management, a content catalog, file access, accounts and skins, logs, and settings. The game runs in a separate Android process from the launcher.
 
-Source Archive v1.19 menargetkan runtime Minecraft Java Edition 26.3. HorizonZ adalah proyek komunitas dan **tidak berafiliasi dengan Mojang atau Microsoft**.
+This source targets Minecraft Java Edition 26.3. HorizonZ is a community project and **is not affiliated with Mojang or Microsoft**.
 
-## ✨ Fitur utama
+## ✨ Features
 
-| Area | Yang tersedia di source v1.19 |
+| Area | What Archive v1.19 contains |
 |---|---|
-| 🏠 **Dashboard** | Carousel wallpaper, splash text, dan impor wallpaper pilihan pengguna. Source CI dapat menyiapkan hingga 18 wallpaper 16:9 berukuran 1280 × 720. |
-| ⬇️ **Game & Assets** | Layar versi game/aset, unduhan yang dapat berjalan di latar belakang, notifikasi Android dengan tahap, persentase, kecepatan dan URL, serta aksi jeda, lanjutkan dan batalkan. |
-| 🧩 **Store & Mods** | Kategori Mods, Native Mods, Modpacks, Resource Packs, dan Shader Packs; status instalasi/pembaruan, versi rilis, serta pengelolaan konten per folder. |
-| 📁 **Files** | Akses file dan impor/ekspor melalui Android Storage Access Framework dan document provider aplikasi. |
-| 👤 **Accounts & Skins** | Profil dan pengelolaan skin; bridge dapat menormalkan skin Minecraft 64×64, mengenali model lengan slim/standard, dan menyinkronkan skin aktif ke runtime. |
-| ⚙️ **Settings** | Sinkronisasi pengaturan launcher/runtime dan dua arah `options.txt` untuk opsi yang didukung, termasuk Render Distance, Simulation Distance, Max FPS, GUI Scale, VSync, dan Fullscreen. `horizon-keypad.json` menyimpan konfigurasi kontrol sentuh. |
-| 🧾 **System Logs** | Log lintas proses dan fitur clear log; tersedia pula ekspor laporan performa dan perbaikan aset. |
-| 🎮 **Gameplay** | NativeActivity layar penuh landscape, immersive mode, kontrol sentuh, serta pengembalian ke launcher saat game ditutup. |
+| 🏠 **Home dashboard** | Wallpaper carousel, splash text, and user wallpaper import. CI can prepare up to 18 widescreen 1280 × 720 backgrounds. |
+| ⬇️ **Game and assets** | Game-version and asset screens; background downloads with Android progress notifications showing stage, percentage, speed, and URL; pause, resume, and cancel actions. |
+| 🧩 **Store and mods** | Mods, Native Mods, Modpacks, Resource Packs, and Shader Packs; installation/update state, release versions, and per-folder content management. |
+| 📁 **Files** | File access and import/export through Android's Storage Access Framework and the app's document provider. |
+| 👤 **Accounts and skins** | Profile and skin management; the bridge normalizes 64×64 Minecraft skins, detects slim/standard arm models, and syncs the active skin to the runtime. |
+| ⚙️ **Settings** | Launcher/runtime settings sync and two-way `options.txt` sync for supported options such as Render Distance, Simulation Distance, Max FPS, GUI Scale, VSync, and Fullscreen. `horizon-keypad.json` stores touch-control settings. |
+| 🧾 **System logs** | Cross-process logs and log clearing, plus performance-report export and asset repair actions. |
+| 🎮 **Gameplay** | Full-screen landscape `NativeActivity`, immersive mode, touch controls, and a return to the launcher when the game exits. |
 
-Navigasi utama di UI: **Dashboard**, **Game & Assets**, **Store**, **Files & Mods**, **Account & Skins**, **System Logs**, dan **Settings**.
+The main navigation includes **Home**, **Game & Assets**, **Store**, **Files & Mods**, **Account & Skins**, **System Logs**, and **Settings**.
 
-## 🆕 Ringkasan perubahan terbaru
+## 🆕 Latest source update
 
 <!-- HORIZONZ_UPDATE_SUMMARY_START -->
-**v1.19.0-HorizonZ — ringkasan source Archive.**
+<!-- HORIZONZ_UPDATE_SUMMARY_LANGUAGE: en -->
+**v1.19.0-HorizonZ — Archive source highlights.**
 
-- **Touch controls:** CI memaketkan 60 tekstur kontrol Bedrock ke `engine-data.zip`; patch runtime menambah batas waktu, mirror CDN cadangan, dan fallback PNG untuk menghindari proses yang macet pada tahap `5/6` atau `17/60`.
-- **Unduhan latar belakang:** `HorizonDownloadService` memakai foreground service `dataSync` agar unduhan tetap berjalan saat launcher diminimalkan dan menampilkan notifikasi progres langsung.
-- **Sinkronisasi pengaturan:** penyelarasan `horizon-keypad.json` dan sinkronisasi dua arah `options.txt` dengan runtime.
-- **Keluar dari game:** token peluncuran, flag keluar, dan watchdog di proses `:game` membantu menutup game dengan bersih dan kembali ke launcher.
-- **Build Rust:** perbaikan penempatan komentar dokumentasi Rust dan konfigurasi fitur audio untuk ABI `armeabi-v7a`.
+- **Touch controls:** CI bundles 60 Bedrock control textures into `engine-data.zip`. Runtime patches add timeouts, CDN mirrors, and a PNG fallback to prevent stalls at `5/6` or `17/60`.
+- **Background downloads:** `HorizonDownloadService` uses an Android `dataSync` foreground service so downloads continue when the launcher is minimized, with live progress notifications.
+- **Settings sync:** synchronizes `horizon-keypad.json` and supported `options.txt` settings in both directions.
+- **Clean game exit:** a launch token, exit flag, and watchdog in the `:game` process help close the game cleanly and return to the launcher.
+- **Rust build fixes:** corrects Rust documentation-comment placement and configures audio features for the `armeabi-v7a` ABI.
 <!-- HORIZONZ_UPDATE_SUMMARY_END -->
 
-## 🧱 Cara kerja dan arsitektur
+## 🧱 How it works
 
 ```mermaid
 flowchart LR
-  U[Pengguna] --> UI[ZalithMainActivity<br/>Kotlin + Jetpack Compose]
-  UI --> B[HorizonNativeBridge<br/>I/O file, profil, settings, store, skin]
-  UI --> D[HorizonDownloadService<br/>Foreground download + notifikasi]
-  B --> FS[Data privat aplikasi<br/>profile, options.txt, mods, logs]
-  UI --> A[HorizonActivity<br/>NativeActivity dalam proses :game]
+  U[Player] --> UI[ZalithMainActivity<br/>Kotlin + Jetpack Compose]
+  UI --> B[HorizonNativeBridge<br/>Files, profiles, settings, store, skins]
+  UI --> D[HorizonDownloadService<br/>Foreground downloads + notifications]
+  B --> FS[App-private data<br/>profiles, options.txt, mods, logs]
+  UI --> A[HorizonActivity<br/>NativeActivity in the :game process]
   A --> JNI[libhorizon_android.so<br/>JNI / Rust cdylib]
-  JNI --> E[Horizon Android engine<br/>Vasysik/horizon-android · branch android]
+  JNI --> E[Horizon Android engine<br/>Vasysik/horizon-android · android branch]
   D --> FS
 ```
 
-**Alur sederhananya:** Compose menampilkan UI dan menangani navigasi. `HorizonNativeBridge.kt` menghubungkan layar ke data profil, file game, katalog, skin, log, dan engine. `HorizonDownloadService.kt` mengerjakan unduhan sebagai foreground service. Saat pengguna menekan Play, `HorizonActivity` membuka `NativeActivity` di proses Android terpisah (`:game`), memuat `libhorizon_android.so`, menyiapkan `HORIZON_HOME`, lalu menjalankan runtime Rust.
+Jetpack Compose renders the screens and handles navigation. `HorizonNativeBridge.kt` connects the UI to profiles, game files, the catalog, skins, logs, and the runtime. `HorizonDownloadService.kt` handles downloads as an Android foreground service. When the player taps **Play**, `HorizonActivity` launches `NativeActivity` in the separate `:game` process, loads `libhorizon_android.so`, prepares `HORIZON_HOME`, and starts the Rust runtime.
 
-Engine Android tidak seluruhnya tersimpan sebagai source di repo ini. Workflow rilis mengambil workspace publik [`Vasysik/horizon-android`](https://github.com/Vasysik/horizon-android) pada branch `android`, menerapkan patch HorizonZ, lalu membangun library native untuk Android.
+The engine workspace is not fully stored in this repository. The release workflow checks out the public [`Vasysik/horizon-android`](https://github.com/Vasysik/horizon-android) project on its `android` branch, applies HorizonZ patches, and builds the Android native library.
 
-## ⚙️ Spesifikasi teknis
+## ⚙️ Technical specifications
 
-| Komponen | Nilai v1.19 |
+| Component | Archive v1.19 value |
 |---|---|
 | Application ID | `dev.horizon.android` |
 | `versionName` / `versionCode` | `1.19.0-HorizonZ` / `43` |
 | Minimum Android | API 28 (Android 9) |
 | Compile / target SDK | API 35 / API 35 |
-| ABI APK | `arm64-v8a` dan `armeabi-v7a` |
-| UI Android | Kotlin 2.0.21, Jetpack Compose, Android Gradle Plugin 8.7.3 |
-| Native layer | Rust `cdylib` + JNI; engine workspace disiapkan CI |
-| Build tools rilis | JDK 17, Android NDK 28.2.13676358, Gradle 8.10.2 |
-| Grafik/perangkat | OpenGL ES 3.0 wajib; Vulkan level 1 opsional; layar sentuh dan gamepad opsional menurut manifest |
-| Orientasi | Launcher dan game menggunakan landscape/sensor landscape |
+| APK ABIs | `arm64-v8a` and `armeabi-v7a` |
+| Android UI | Kotlin 2.0.21, Jetpack Compose, Android Gradle Plugin 8.7.3 |
+| Native layer | Rust `cdylib` + JNI; engine workspace prepared by CI |
+| Release build tools | JDK 17, Android NDK 28.2.13676358, Gradle 8.10.2 |
+| Graphics/device requirements | OpenGL ES 3.0 required; Vulkan 1 optional; touch screen and gamepad are optional in the manifest |
+| Orientation | Launcher and game use landscape/sensor-landscape orientation |
 
-## 🛠️ Build dan rilis
+## 🛠️ Build and downloads
 
-### Unduh APK
+### Download an APK
 
-Buka [GitHub Releases](https://github.com/Fadiba21/Horizonz-Launcher/releases/latest), lalu pilih APK sesuai arsitektur perangkat: `arm64-v8a` untuk kebanyakan ponsel Android modern atau `armeabi-v7a` untuk perangkat 32-bit. Release menyertakan `SHA256SUMS.txt` untuk pemeriksaan integritas.
+Open [GitHub Releases](https://github.com/Fadiba21/Horizonz-Launcher/releases/latest) and choose the APK for the device architecture: `arm64-v8a` for most modern Android phones or `armeabi-v7a` for 32-bit devices. Releases include `SHA256SUMS.txt` for integrity checks.
 
-### Build source
+### Build from source
 
-Build rilis lengkap didefinisikan di [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml). Workflow menyiapkan JDK 17, Android platform/build-tools 35, NDK, Rust target Android, mengambil workspace engine dan menerapkan patch, menyiapkan tekstur kontrol/wallpaper, lalu menjalankan Gradle untuk membuat APK kedua ABI. Workflow juga mengunggah APK dan checksum ke GitHub Release.
+The complete release build is defined in [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml). It sets up JDK 17, Android platform/build-tools 35, the NDK, and Android Rust targets; fetches the engine workspace and applies patches; prepares control textures and wallpapers; builds both ABI variants; and uploads the APKs and checksums to a GitHub Release.
 
-`tools/android_build.py` adalah helper untuk workspace yang sudah disiapkan. Untuk hasil yang sama dengan release, gunakan workflow karena tahap clone engine dan patch dilakukan di sana. Contoh perintah helper setelah dependensi dan workspace native tersedia:
+`tools/android_build.py` is a helper for an already prepared workspace. For a release-equivalent build, use GitHub Actions because that workflow also prepares the engine checkout and patches. Example helper command after the required native workspace and dependencies are available:
 
 ```bash
 python3 tools/android_build.py --abi arm64-v8a --profile release --public
 ```
 
-## 🗂️ Peta source
+## 📸 Authentic launcher screenshots
 
-| Path | Isi |
+These are the original HorizonZ launcher screenshots supplied for this README. They are kept unedited; the banner above is a crop from the Home screenshot.
+
+### 🏠 Home
+
+![HorizonZ Home screen with the Minecraft 26.3 profile and Play button](docs/screenshots/home.jpg)
+
+### 🛍️ Store
+
+![HorizonZ Store catalog screen](docs/screenshots/store.jpg)
+
+### 🧩 Files and Mods
+
+![HorizonZ Files and Mods screen](docs/screenshots/mods.jpg)
+
+### 👤 Account and Skins
+
+![HorizonZ Account and Skins screen](docs/screenshots/account-skins.jpg)
+
+### ⚙️ Settings
+
+![HorizonZ Settings screen](docs/screenshots/settings.jpg)
+
+## 🗂️ Source map
+
+| Path | Purpose |
 |---|---|
-| `packaging/android/java/.../ui/` | Layar launcher Compose dan tema |
-| `packaging/android/java/.../bridge/` | Bridge Kotlin untuk file, profil, download, store, skin, settings, dan log |
+| `packaging/android/java/.../ui/` | Compose launcher screens and theme |
+| `packaging/android/java/.../bridge/` | Kotlin bridges for files, profiles, downloads, store, skins, settings, and logs |
 | `packaging/android/java/.../service/` | Foreground download service |
-| `packaging/android/java/dev/horizon/android/HorizonActivity.java` | NativeActivity game, environment runtime, splash, dan exit watchdog |
-| `crates/horizon-android/` | Rust JNI/cdylib Android yang digunakan saat build |
-| `packaging/android/res/drawable-nodpi/` | Wallpaper pixel bawaan dan aset aplikasi |
-| `scripts/patch_horizon_direct_boot.py` | Patch source engine yang disiapkan workflow |
-| `scripts/prestage_controls_and_wallpapers.py` | Menyiapkan tekstur kontrol dan wallpaper untuk paket rilis |
-| `scripts/apply_update_zip.py` | Mengaplikasikan source ZIP dari `Update/` dengan proteksi README |
-| `tools/android_build.py` | Helper build Rust/Gradle |
-| `.github/workflows/build-apk.yml` | Pipeline build dan publikasi APK |
+| `packaging/android/java/dev/horizon/android/HorizonActivity.java` | Game `NativeActivity`, runtime environment, splash, and exit watchdog |
+| `crates/horizon-android/` | Rust JNI/cdylib Android library used by the build |
+| `packaging/android/res/drawable-nodpi/` | Bundled pixel wallpapers and app assets |
+| `docs/images/` | Authentic gameplay banner crop from the supplied Home screenshot |
+| `docs/screenshots/` | Original launcher screenshots supplied for the README |
+| `scripts/patch_horizon_direct_boot.py` | Patch applied to the engine workspace by CI |
+| `scripts/prestage_controls_and_wallpapers.py` | Prepares touch-control textures and release wallpapers |
+| `scripts/apply_update_zip.py` | Applies a source ZIP from `Update/` while protecting README layout/language |
+| `tools/android_build.py` | Rust/Gradle build helper |
+| `.github/workflows/build-apk.yml` | APK build and release pipeline |
 
-## ♻️ Kebijakan update ZIP dan README
+## ♻️ ZIP updates and README language
 
-Source ZIP yang memang dipilih untuk update ditempatkan di `Update/` dan diproses oleh workflow build. **Jangan sertakan ZIP v1.20 yang pernah ditemukan di fork; basis repo ini adalah Archive v1.19.** Folder `Update/` pada source ini hanya memiliki `.gitkeep` dan panduan, bukan ZIP update.
+This branch is based on **Archive v1.19**. No ZIP source is included in `Update/`; do not add the v1.20 ZIP previously found in the fork. The ZIP workflow remains separate from the paused external ZIP-monitoring automation.
 
-README ini ditandai `<!-- HORIZONZ_README_PRESERVE -->`. `scripts/apply_update_zip.py` menjaga layout dan isi README: versi pada blok `HORIZONZ_VERSION` diperbarui dari `versionName`/`versionCode` dalam `packaging/android/build.gradle`, sedangkan ringkasan perubahan hanya diganti jika README dari ZIP baru menyertakan blok `HORIZONZ_UPDATE_SUMMARY_START` dan `HORIZONZ_UPDATE_SUMMARY_END`. Bila blok ringkasan tidak ada, catatan lama dipertahankan dan workflow memberi peringatan—tidak menebak fitur baru dari perubahan kode.
+The README starts with `<!-- HORIZONZ_README_PRESERVE -->` and `<!-- HORIZONZ_README_LANGUAGE: en -->`. The updater never replaces an existing README wholesale. It refreshes the version badge and SDK metadata from `versionName`, `versionCode`, and SDK values in `packaging/android/build.gradle`. It only replaces the latest-update section when the incoming README includes the marked `HORIZONZ_UPDATE_SUMMARY` block **and** `<!-- HORIZONZ_UPDATE_SUMMARY_LANGUAGE: en -->`. If that English marker is absent, the existing English summary is kept.
 
-Saat menyiapkan ZIP source berikutnya, pertahankan seluruh README ini dan edit **hanya** ringkasan di antara marker `HORIZONZ_UPDATE_SUMMARY_START` / `HORIZONZ_UPDATE_SUMMARY_END` sesuai perubahan nyata. Dengan begitu identitas proyek, arsitektur, panduan, dan tata letak tetap utuh; nomor versi mengikuti Gradle, sementara changelog mengikuti konteks update.
+For a future source ZIP, preserve this README and update only the marked summary with accurate English notes about the changes. If the minimum Android version, SDKs, ABI, build tools, or runtime architecture changes, update the relevant technical sections as well. The updater does not guess documentation from code diffs.
 
-Jika minimum Android, SDK, ABI, build tools, atau arsitektur runtime berubah, perbarui baris spesifikasi dan bagian teknis terkait secara eksplisit. Updater otomatis hanya menyentuh blok versi dan ringkasan yang bertanda; ia tidak menebak perubahan teknis dari diff kode.
+## 📜 License and attribution
 
-## 📜 Lisensi dan atribusi
-
-Lihat [`LICENSE.txt`](LICENSE.txt) dan [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) untuk lisensi source serta komponen pihak ketiga. Minecraft adalah merek dagang Mojang/Microsoft; HorizonZ bukan produk resmi atau afiliasinya.
+See [`LICENSE.txt`](LICENSE.txt) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for source and third-party component licensing. Minecraft is a trademark of Mojang/Microsoft; HorizonZ is not an official Mojang or Microsoft product.

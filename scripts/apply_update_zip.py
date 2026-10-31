@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Apply source ZIPs in Update/ while preserving the project's README layout.
 
-If the current README contains HORIZONZ_README_PRESERVE, an incoming root README
-is never copied wholesale. Only its marked HORIZONZ_UPDATE_SUMMARY block may be
-synchronized. The version block is refreshed from packaging/android/build.gradle.
+An existing README is never copied wholesale. Only its marked version block and
+an explicitly English HORIZONZ_UPDATE_SUMMARY block may be synchronized. The
+version block is refreshed from packaging/android/build.gradle.
 """
 
 import re
@@ -15,11 +15,13 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 UPDATE_DIR = ROOT_DIR / "Update"
+README_LANGUAGE_MARKER = "<!-- HORIZONZ_README_LANGUAGE: en -->"
 README_PRESERVE_MARKER = "<!-- HORIZONZ_README_PRESERVE -->"
 VERSION_START = "<!-- HORIZONZ_VERSION_START -->"
 VERSION_END = "<!-- HORIZONZ_VERSION_END -->"
 SUMMARY_START = "<!-- HORIZONZ_UPDATE_SUMMARY_START -->"
 SUMMARY_END = "<!-- HORIZONZ_UPDATE_SUMMARY_END -->"
+SUMMARY_LANGUAGE_MARKER = "<!-- HORIZONZ_UPDATE_SUMMARY_LANGUAGE: en -->"
 
 
 def extract_marked_block(text: str, start_marker: str, end_marker: str) -> str | None:
@@ -78,10 +80,10 @@ def version_block(metadata: dict[str, str]) -> str | None:
         f"{VERSION_START}\n"
         f"<p align=\"center\">\n"
         f"  <a href=\"https://github.com/Fadiba21/Horizonz-Launcher/releases/latest\"><img src=\"https://img.shields.io/badge/Release-v{badge_version}-52b788?style=for-the-badge&logo=android&logoColor=white\" alt=\"Release v{badge_version}\"></a>\n"
-        f"  <strong>Source saat ini:</strong> "
+        f"  <strong>Current source:</strong> "
         f"<code>{version}</code> · <strong>versionCode:</strong> "
-        f"<code>{code}</code> · <strong>minimum Android:</strong> "
-        f"API {min_sdk} · <strong>compile/target SDK:</strong> "
+        f"<code>{code}</code> · <strong>Minimum Android:</strong> "
+        f"API {min_sdk} · <strong>Compile/target SDK:</strong> "
         f"{compile_sdk}/{target_sdk}\n</p>\n"
         f"{VERSION_END}"
     )
@@ -90,16 +92,16 @@ def version_block(metadata: dict[str, str]) -> str | None:
 def update_preserved_readme(root_dir: Path, incoming_readme: str | None) -> None:
     readme_path = root_dir / "README.md"
     if not readme_path.is_file():
-        if incoming_readme is not None:
+        if incoming_readme is not None and README_LANGUAGE_MARKER in incoming_readme:
             readme_path.write_text(incoming_readme, encoding="utf-8")
-            print("[Auto-Update] README.md added because no README existed.")
+            print("[Auto-Update] README.md added with its explicit English-language marker.")
+        elif incoming_readme is not None:
+            print("[Auto-Update] Incoming README skipped; it lacks the explicit English-language marker.")
         return
 
     current = readme_path.read_text(encoding="utf-8", errors="replace")
     if README_PRESERVE_MARKER not in current:
-        if incoming_readme is not None:
-            readme_path.write_text(incoming_readme, encoding="utf-8")
-            print("[Auto-Update] Legacy README replaced; preservation marker was absent.")
+        print("[Auto-Update] Existing README retained; its preservation marker is absent.")
         return
 
     updated = current
@@ -116,12 +118,14 @@ def update_preserved_readme(root_dir: Path, incoming_readme: str | None) -> None
 
     if incoming_readme is not None:
         summary = extract_marked_block(incoming_readme, SUMMARY_START, SUMMARY_END)
-        if summary is not None:
+        if summary is not None and SUMMARY_LANGUAGE_MARKER in summary:
             updated, changed = replace_marked_block(updated, summary, SUMMARY_START, SUMMARY_END)
             if changed:
-                print("[Auto-Update] README update summary synchronized from the ZIP's marked block.")
+                print("[Auto-Update] English README update summary synchronized from the ZIP's marked block.")
             else:
                 print("[Auto-Update] Incoming summary found, but current README summary markers are missing.")
+        elif summary is not None:
+            print("[Auto-Update] Incoming summary lacks the explicit English marker; existing summary was preserved.")
         else:
             print("[Auto-Update] Incoming README has no marked update summary; existing summary was preserved.")
     else:
@@ -147,12 +151,7 @@ def extract_zip_to_root(zip_path: Path, root_dir: Path) -> int:
                 print(f"[Auto-Update] Detected wrapper folder '{source_base.name}/', unwrapping to root...")
 
         current_readme_path = root_dir / "README.md"
-        preserve_readme = (
-            current_readme_path.is_file()
-            and README_PRESERVE_MARKER in current_readme_path.read_text(
-                encoding="utf-8", errors="replace"
-            )
-        )
+        preserve_readme = current_readme_path.is_file()
         incoming_readme = None
 
         for item in sorted(source_base.rglob("*")):
