@@ -186,7 +186,7 @@ enum class BuiltInSkinPreset(
 
 object HorizonNativeBridge {
     private const val TAG = "HorizonNativeBridge"
-    const val INSTALLED_LAUNCHER_VERSION = "1.18"
+    const val INSTALLED_LAUNCHER_VERSION = "1.19"
     private const val MAX_LOG_LINES = 250
     private var nativeLoaded = false
     private val memoryLogs = ConcurrentLinkedDeque<String>()
@@ -3558,7 +3558,7 @@ object HorizonNativeBridge {
 
     fun checkGithubLatestReleaseUpdate(): GithubReleaseUpdateInfo? {
         return try {
-            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 18, 0)
+            val installedTuple = parseVersionNumbers("v$INSTALLED_LAUNCHER_VERSION") ?: listOf(1, 19, 0)
             val conn = (URL("https://api.github.com/repos/Fadiba21/Horizonz-Launcher/releases?per_page=15").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 7000
                 readTimeout = 8000

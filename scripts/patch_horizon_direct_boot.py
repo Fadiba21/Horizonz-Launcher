@@ -55,34 +55,13 @@ fn sanitize_and_repair_horizon_mods(home: &std::path::Path) {
         if !fname.ends_with(".hmod") {
             continue;
         }
-        let valid = (|| -> Option<bool> {
-            let file = std::fs::File::open(&path).ok()?;
-            let mut archive = zip::ZipArchive::new(file).ok()?;
-            let has_manifest = archive.by_name("horizon-mod.toml").is_ok();
-            Some(has_manifest)
-        })().unwrap_or(false);
-        if !valid {
-            let stem = fname.trim_end_matches(".hmod").to_lowercase();
-            let clean_id: String = stem
-                .chars()
-                .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' { c } else { '_' })
-                .collect();
-            let clean_id = clean_id.trim_matches('_');
-            let mod_id = if clean_id.is_empty() { "custom_mod" } else { clean_id };
-            if let Ok(file) = std::fs::File::create(&path) {
-                let mut zip_writer = zip::ZipWriter::new(file);
-                let options = zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated);
-                if zip_writer.start_file("horizon-mod.toml", options).is_ok() {
-                    use std::io::Write;
-                    let manifest = format!(
-                        "id = \"{}\"\nname = \"{}\"\nversion = \"1.0.0\"\ndescription = \"Horizon 26.3 Mod\"\nauthors = [\"Horizon\"]\napi = \"0.2\"\nside = \"both\"\ncapabilities = [\"registries\"]\n",
-                        mod_id, mod_id
-                    );
-                    let _ = zip_writer.write_all(manifest.as_bytes());
-                }
-                let _ = zip_writer.finish();
-            }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let has_zip_magic = bytes.len() > 22 && bytes[0..4] == [0x50u8, 0x4Bu8, 0x03u8, 0x04u8];
+        let has_manifest_name = bytes.windows(16).any(|w| w == b"horizon-mod.toml");
+        if !has_zip_magic || !has_manifest_name {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
