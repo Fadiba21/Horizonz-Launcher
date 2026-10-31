@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HorizonZ Launcher</string>
+    <string name="documents_root_title">HorizonZ (Minecraft 26.3 Rust)</string>
+    <string name="documents_root_summary">Worlds, Resource Packs, Wasm Mods &amp; Logs</string>
+</resources>
